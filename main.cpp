@@ -1,8 +1,16 @@
 #include <iostream>
-#include "vulkan/vulkan_raii.hpp"
-#include "vk_mem_alloc.h"
-#include "glfw/glfw3.h"
-#include "glm/glm.hpp"
+#include <vulkan/vulkan_raii.hpp>
+#include <vk_mem_alloc.h>
+#include <glfw/glfw3.h>
+#include <glm/glm.hpp>
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <tiny_gltf.h>
+#include <SPIRV/GlslangToSpv.h>
+#include <StandAlone/ResourceLimits.h>
 
 int main()
 {
@@ -23,6 +31,9 @@ int main()
     instanceCreateInfo.pApplicationInfo = &appInfo;
 
     vk::raii::Instance instance{ context, instanceCreateInfo };
+
+    glslang::InitializeProcess();
+    glslang::FinalizeProcess();
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
