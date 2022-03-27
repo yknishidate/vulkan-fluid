@@ -4,6 +4,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(external/glfw)
 add_subdirectory(external/glslang)
+add_subdirectory(external/SPIRV-Cross)
 
 add_executable(${PROJECT_NAME} main.cpp)
 
@@ -11,6 +12,9 @@ target_link_libraries(
     ${PROJECT_NAME} PUBLIC 
     glfw
     glslang
+    glslang-default-resource-limits
+    SPIRV
+    spirv-cross-glsl
 )
 
 target_include_directories(
@@ -22,4 +26,5 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/external/tinyobjloader"
     "${PROJECT_SOURCE_DIR}/external/tinygltf"
     "${PROJECT_SOURCE_DIR}/external/glslang"
+    "${PROJECT_SOURCE_DIR}/external/SPIRV-Cross"
 )
