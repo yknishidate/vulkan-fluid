@@ -1,14 +1,21 @@
-# Vulkan Starter
+# Vulkan RAII Hello Compute
 
-A Vulkan starter repository with additional useful libraries
+Vulkan Hello Compute using `vk::raii`
 
-## Libs
+## Clone
 
-- GLFW
-- GLM
-- glslang
-- tinygltf
-- tinyobjloaderr
-- Vulkan-Headers
-- VulkanMemoryAllocator
-- SPIRV-Cross
+```
+git clone --recursive https://github.com/yknishidate/Vulkan-RAII-Hello-Compute.git
+cd Vulkan-RAII-Hello-Compute
+mkdir build
+cd build
+```
+
+## Build & Run
+
+```
+// windows
+cmake ..
+cmake --build .
+.\Debug\vulkan_compute.exe
+```

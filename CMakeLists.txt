@@ -1,12 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
-project(vk LANGUAGES CXX)
+project(vulkan_compute LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(external/glfw)
 add_subdirectory(external/glslang)
-add_subdirectory(external/SPIRV-Cross)
 
-add_executable(${PROJECT_NAME} main.cpp)
+add_executable(${PROJECT_NAME} src/main.cpp)
 
 target_link_libraries(
     ${PROJECT_NAME} PUBLIC 
@@ -14,7 +13,6 @@ target_link_libraries(
     glslang
     glslang-default-resource-limits
     SPIRV
-    spirv-cross-glsl
 )
 
 target_include_directories(
@@ -23,8 +21,5 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/external/VulkanMemoryAllocator/include"
     "${PROJECT_SOURCE_DIR}/external/glfw/include"
     "${PROJECT_SOURCE_DIR}/external/glm"
-    "${PROJECT_SOURCE_DIR}/external/tinyobjloader"
-    "${PROJECT_SOURCE_DIR}/external/tinygltf"
     "${PROJECT_SOURCE_DIR}/external/glslang"
-    "${PROJECT_SOURCE_DIR}/external/SPIRV-Cross"
 )
