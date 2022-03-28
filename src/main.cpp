@@ -12,7 +12,7 @@ layout(binding = 0, set = 0, rgba8) uniform image2D renderImage;
 void main()
 {
     vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-	imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
+    imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
 }
 )";
 
