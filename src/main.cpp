@@ -1,11 +1,13 @@
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <string>
 #include <chrono>
 #include <iostream>
-#include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
 #include "buffer.hpp"
 #include "image.hpp"
 #include "kernel.hpp"
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 const std::string externalForceShader = R"(
 #version 460
@@ -157,9 +159,6 @@ int main()
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
         GLFWwindow* window = glfwCreateWindow(width, height, "Vulkan", nullptr, nullptr);
 
-        // Create context
-        vk::raii::Context context;
-
         // Gather extensions
         uint32_t glfwExtensionCount = 0;
         const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -170,30 +169,35 @@ int main()
         std::vector<const char*> layers{ "VK_LAYER_KHRONOS_validation" };
 
         // Create instance
+        vk::DynamicLoader dl;
+        auto vkGetInstanceProcAddr = dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
+
         vk::ApplicationInfo appInfo;
         appInfo.apiVersion = VK_API_VERSION_1_2;
         vk::InstanceCreateInfo instanceCreateInfo;
         instanceCreateInfo.setPApplicationInfo(&appInfo);
         instanceCreateInfo.setPEnabledExtensionNames(extensions);
         instanceCreateInfo.setPEnabledLayerNames(layers);
-        vk::raii::Instance instance{ context, instanceCreateInfo };
+        vk::UniqueInstance instance = vk::createInstanceUnique(instanceCreateInfo);
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(*instance);
 
         // Create debug messenger
         vk::DebugUtilsMessengerCreateInfoEXT debugMessengerCreateInfo;
         debugMessengerCreateInfo.setMessageSeverity(vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
         debugMessengerCreateInfo.setMessageType(vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
         debugMessengerCreateInfo.setPfnUserCallback(&debugUtilsMessengerCallback);
-        vk::raii::DebugUtilsMessengerEXT debugUtilsMessenger{ instance, debugMessengerCreateInfo };
+        vk::UniqueDebugUtilsMessengerEXT debugUtilsMessenger = instance->createDebugUtilsMessengerEXTUnique(debugMessengerCreateInfo);
 
         // Pick first physical device
-        vk::raii::PhysicalDevice physicalDevice = vk::raii::PhysicalDevices{ instance }.front();
+        vk::PhysicalDevice physicalDevice = instance->enumeratePhysicalDevices().front();
 
         // Create surface
         VkSurfaceKHR _surface;
         if (glfwCreateWindowSurface(VkInstance(*instance), window, nullptr, &_surface) != VK_SUCCESS) {
             throw std::runtime_error("failed to create window surface!");
         }
-        vk::raii::SurfaceKHR surface{ instance, _surface };
+        vk::UniqueSurfaceKHR surface{ _surface, {*instance} };
 
         // Find queue families
         uint32_t computeFamily;
@@ -219,36 +223,29 @@ int main()
         computeQueueCreateInfo.setQueueCount(1);
         computeQueueCreateInfo.setPQueuePriorities(&queuePriority);
 
-        vk::DeviceQueueCreateInfo presentQueueCreateInfo;
-        presentQueueCreateInfo.setQueueFamilyIndex(presentFamily);
-        presentQueueCreateInfo.setQueueCount(1);
-        presentQueueCreateInfo.setPQueuePriorities(&queuePriority);
-
-        std::vector deviceQueueCreateInfos{
-            computeQueueCreateInfo,
-            presentQueueCreateInfo
-        };
-
         vk::DeviceCreateInfo deviceCreateInfo;
         deviceCreateInfo.setQueueCreateInfos(computeQueueCreateInfo);
         deviceCreateInfo.setPEnabledLayerNames(layers);
         deviceCreateInfo.setPEnabledExtensionNames(requiredExtensions);
-        vk::raii::Device device{ physicalDevice, deviceCreateInfo };
+        vk::UniqueDevice device = physicalDevice.createDeviceUnique(deviceCreateInfo);
 
         // Get queue
-        vk::raii::Queue computeQueue{ device, computeFamily, 0 };
-        vk::raii::Queue presentQueue{ device, presentFamily, 0 };
+        vk::Queue computeQueue = device->getQueue(computeFamily, 0);
+        vk::Queue presentQueue = device->getQueue(presentFamily, 0);
 
         // Create command pool
         vk::CommandPoolCreateInfo commandPoolCreateInfo;
         commandPoolCreateInfo.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
         commandPoolCreateInfo.setQueueFamilyIndex(computeFamily);
-        vk::raii::CommandPool commandPool{ device, commandPoolCreateInfo };
+        vk::UniqueCommandPool commandPool = device->createCommandPoolUnique(commandPoolCreateInfo);
 
         // Create command buffer
-        vk::CommandBufferAllocateInfo commandBufferAllocateInfo{ *commandPool, vk::CommandBufferLevel::ePrimary, 1 };
-        vk::raii::CommandBuffers commandBuffers{ device, commandBufferAllocateInfo };
-        vk::raii::CommandBuffer commandBuffer = std::move(commandBuffers.front());
+        vk::CommandBufferAllocateInfo commandBufferAllocateInfo;
+        commandBufferAllocateInfo.setCommandPool(*commandPool);
+        commandBufferAllocateInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+        commandBufferAllocateInfo.setCommandBufferCount(1);
+        std::vector commandBuffers = device->allocateCommandBuffersUnique(commandBufferAllocateInfo);
+        vk::UniqueCommandBuffer commandBuffer = std::move(commandBuffers.front());
 
         // Create swapchain
         vk::SwapchainCreateInfoKHR swapchainCreateInfo;
@@ -262,17 +259,17 @@ int main()
         swapchainCreateInfo.setPreTransform(vk::SurfaceTransformFlagBitsKHR::eIdentity);
         swapchainCreateInfo.setPresentMode(vk::PresentModeKHR::eFifo);
         swapchainCreateInfo.setClipped(true);
-        vk::raii::SwapchainKHR swapchain{ device, swapchainCreateInfo };
-        std::vector swapChainImages = swapchain.getImages();
+        vk::UniqueSwapchainKHR swapchain = device->createSwapchainKHRUnique(swapchainCreateInfo);
+        std::vector swapChainImages = device->getSwapchainImagesKHR(*swapchain);
 
         // Create resources
-        Image renderImage{ device, physicalDevice, commandBuffer, computeQueue, width, height, vk::Format::eB8G8R8A8Unorm };
-        Image velocityImage0{ device, physicalDevice, commandBuffer, computeQueue, width, height };
-        Image velocityImage1{ device, physicalDevice, commandBuffer, computeQueue, width, height };
-        Image divergenceImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
-        Image pressureImage0{ device, physicalDevice, commandBuffer, computeQueue, width, height };
-        Image pressureImage1{ device, physicalDevice, commandBuffer, computeQueue, width, height };
-        Buffer uniformBuffer{ device, physicalDevice, commandBuffer, computeQueue, sizeof(UniformBufferObject) };
+        Image renderImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height, vk::Format::eB8G8R8A8Unorm };
+        Image velocityImage0{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
+        Image velocityImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
+        Image divergenceImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
+        Image pressureImage0{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
+        Image pressureImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
+        Buffer uniformBuffer{ *device, physicalDevice, *commandBuffer, computeQueue, sizeof(UniformBufferObject) };
 
         UniformBufferObject ubo;
         ubo.mousePosition[0] = 0.0f;
@@ -287,11 +284,11 @@ int main()
             vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 20},
             vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 20},
         };
-        vk::DescriptorPoolCreateInfo descPoolCreateInfo;
-        descPoolCreateInfo.setPoolSizes(poolSizes);
-        descPoolCreateInfo.setMaxSets(10);
-        descPoolCreateInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
-        vk::raii::DescriptorPool descPool{ device, descPoolCreateInfo };
+        vk::DescriptorPoolCreateInfo descriptorPoolCreateInfo;
+        descriptorPoolCreateInfo.setPoolSizes(poolSizes);
+        descriptorPoolCreateInfo.setMaxSets(10);
+        descriptorPoolCreateInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
+        vk::UniqueDescriptorPool descPool = device->createDescriptorPoolUnique(descriptorPoolCreateInfo);
 
         // Create bindings
         std::vector<vk::DescriptorSetLayoutBinding> externalForceKernelBindings{
@@ -320,25 +317,25 @@ int main()
         };
 
         // Create kernels
-        ComputeKernel externalForceKernel{ device, externalForceShader, externalForceKernelBindings, descPool };
-        ComputeKernel advectKernel{ device, advectShader, advectKernelBindings, descPool };
-        ComputeKernel divergenceKernel{ device, divergenceShader, divergenceKernelBindings, descPool };
-        ComputeKernel pressureKernel{ device, pressureShader, pressureKernelBindings, descPool };
-        ComputeKernel renderKernel{ device, renderShader, renderKernelBindings, descPool };
-        externalForceKernel.updateDescriptorSet(device, 0, 1, velocityImage0);
-        externalForceKernel.updateDescriptorSet(device, 1, 1, uniformBuffer);
-        advectKernel.updateDescriptorSet(device, 0, 1, velocityImage0, vk::DescriptorType::eCombinedImageSampler);
-        advectKernel.updateDescriptorSet(device, 1, 1, velocityImage1);
-        divergenceKernel.updateDescriptorSet(device, 0, 1, velocityImage1, vk::DescriptorType::eCombinedImageSampler);
-        divergenceKernel.updateDescriptorSet(device, 1, 1, divergenceImage);
-        pressureKernel.updateDescriptorSet(device, 0, 1, pressureImage0, vk::DescriptorType::eCombinedImageSampler);
-        pressureKernel.updateDescriptorSet(device, 1, 1, divergenceImage, vk::DescriptorType::eCombinedImageSampler);
-        pressureKernel.updateDescriptorSet(device, 2, 1, pressureImage1);
-        renderKernel.updateDescriptorSet(device, 0, 1, renderImage);
-        renderKernel.updateDescriptorSet(device, 1, 1, velocityImage1);
-        renderKernel.updateDescriptorSet(device, 2, 1, divergenceImage);
-        renderKernel.updateDescriptorSet(device, 3, 1, pressureImage1);
-        renderKernel.updateDescriptorSet(device, 4, 1, velocityImage0);
+        ComputeKernel externalForceKernel{ *device, externalForceShader, externalForceKernelBindings, *descPool };
+        ComputeKernel advectKernel{ *device, advectShader, advectKernelBindings, *descPool };
+        ComputeKernel divergenceKernel{ *device, divergenceShader, divergenceKernelBindings, *descPool };
+        ComputeKernel pressureKernel{ *device, pressureShader, pressureKernelBindings, *descPool };
+        ComputeKernel renderKernel{ *device, renderShader, renderKernelBindings, *descPool };
+        externalForceKernel.updateDescriptorSet(0, 1, velocityImage0);
+        externalForceKernel.updateDescriptorSet(1, 1, uniformBuffer);
+        advectKernel.updateDescriptorSet(0, 1, velocityImage0, vk::DescriptorType::eCombinedImageSampler);
+        advectKernel.updateDescriptorSet(1, 1, velocityImage1);
+        divergenceKernel.updateDescriptorSet(0, 1, velocityImage1, vk::DescriptorType::eCombinedImageSampler);
+        divergenceKernel.updateDescriptorSet(1, 1, divergenceImage);
+        pressureKernel.updateDescriptorSet(0, 1, pressureImage0, vk::DescriptorType::eCombinedImageSampler);
+        pressureKernel.updateDescriptorSet(1, 1, divergenceImage, vk::DescriptorType::eCombinedImageSampler);
+        pressureKernel.updateDescriptorSet(2, 1, pressureImage1);
+        renderKernel.updateDescriptorSet(0, 1, renderImage);
+        renderKernel.updateDescriptorSet(1, 1, velocityImage1);
+        renderKernel.updateDescriptorSet(2, 1, divergenceImage);
+        renderKernel.updateDescriptorSet(3, 1, pressureImage1);
+        renderKernel.updateDescriptorSet(4, 1, velocityImage0);
 
         // Main loop
         uint32_t frame = 0;
@@ -356,16 +353,15 @@ int main()
             uniformBuffer.copy(&ubo);
 
             // Acquire next image
-            vk::raii::Semaphore semaphore{ device, vk::SemaphoreCreateInfo {} };
-            auto [result, imageIndex] = swapchain.acquireNextImage(UINT64_MAX, *semaphore);
+            vk::UniqueSemaphore semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{});
+            uint32_t imageIndex = device->acquireNextImageKHR(*swapchain, UINT64_MAX, *semaphore);
             auto swapChainImage = swapChainImages[imageIndex];
 
             // Dispatch compute shader
-            commandBuffer.reset();
-            commandBuffer.begin(vk::CommandBufferBeginInfo{});
-            externalForceKernel.run(commandBuffer, width, height);
-            advectKernel.run(commandBuffer, width, height);
-            divergenceKernel.run(commandBuffer, width, height);
+            commandBuffer->begin(vk::CommandBufferBeginInfo{});
+            externalForceKernel.run(*commandBuffer, width, height);
+            advectKernel.run(*commandBuffer, width, height);
+            divergenceKernel.run(*commandBuffer, width, height);
 
             vk::ImageCopy copyRegion;
             copyRegion.setSrcSubresource({ vk::ImageAspectFlagBits::eColor, 0, 0, 1 });
@@ -374,32 +370,30 @@ int main()
 
             const int iteration = 16;
             for (int i = 0; i < iteration; i++) {
-                pressureKernel.run(commandBuffer, width, height);
+                pressureKernel.run(*commandBuffer, width, height);
 
                 // Copy render image
                 //// pressureImage1 -> pressureImage0
-                setImageLayout(commandBuffer, *pressureImage1.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal);
-                setImageLayout(commandBuffer, *pressureImage0.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferDstOptimal);
-                commandBuffer.copyImage(*pressureImage1.image, vk::ImageLayout::eTransferSrcOptimal,
-                                        *pressureImage0.image, vk::ImageLayout::eTransferDstOptimal, copyRegion);
-                setImageLayout(commandBuffer, *pressureImage1.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
-                setImageLayout(commandBuffer, *pressureImage0.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral);
+                setImageLayout(*commandBuffer, *pressureImage1.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal);
+                setImageLayout(*commandBuffer, *pressureImage0.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferDstOptimal);
+                commandBuffer->copyImage(*pressureImage1.image, vk::ImageLayout::eTransferSrcOptimal,
+                                         *pressureImage0.image, vk::ImageLayout::eTransferDstOptimal, copyRegion);
+                setImageLayout(*commandBuffer, *pressureImage1.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
+                setImageLayout(*commandBuffer, *pressureImage0.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral);
             }
 
-            renderKernel.run(commandBuffer, width, height);
+            renderKernel.run(*commandBuffer, width, height);
 
             // Copy render image
             //// render -> swapchain
-            setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
-            setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+            setImageLayout(*commandBuffer, *renderImage.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
+            setImageLayout(*commandBuffer, swapChainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+            commandBuffer->copyImage(*renderImage.image, vk::ImageLayout::eTransferSrcOptimal,
+                                     swapChainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
+            setImageLayout(*commandBuffer, *renderImage.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
+            setImageLayout(*commandBuffer, swapChainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
 
-            commandBuffer.copyImage(*renderImage.image, vk::ImageLayout::eTransferSrcOptimal,
-                                    swapChainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
-
-            setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
-            setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
-
-            commandBuffer.end();
+            commandBuffer->end();
 
             // Submit command buffer
             vk::SubmitInfo submitInfo;
