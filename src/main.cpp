@@ -17,7 +17,8 @@ void main()
 {
     //vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
     //imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
-    imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(ubo.mousePosition, 0, 1));
+    vec2 color = ubo.mousePosition / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+    imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(color, 0, 1));
 }
 )";
 
@@ -515,6 +516,13 @@ int main()
         // Main loop
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+
+            // Get mouse positions
+            double xpos, ypos;
+            glfwGetCursorPos(window, &xpos, &ypos);
+            ubo.mousePosition[0] = xpos;
+            ubo.mousePosition[1] = ypos;
+            uniformBuffer.copy(&ubo);
 
             // Acquire next image
             vk::raii::Semaphore semaphore{ device, vk::SemaphoreCreateInfo {} };
