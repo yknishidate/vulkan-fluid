@@ -9,10 +9,15 @@ const std::string externalForceShader = R"(
 #version 460
 layout(local_size_x = 1, local_size_y = 1) in;
 layout(binding = 0, rgba8) uniform image2D velocityImage;
+layout(binding = 1) uniform UniformBufferObject {
+    vec2 mousePosition;
+    vec2 mouseMove;
+} ubo;
 void main()
 {
-    vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-    imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
+    //vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+    //imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
+    imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(ubo.mousePosition, 0, 1));
 }
 )";
 
@@ -106,6 +111,25 @@ void setImageLayout(const vk::raii::CommandBuffer& commandBuffer,
     commandBuffer.pipelineBarrier(srcStageMask, dstStageMask, {}, {}, {}, barrier);
 }
 
+struct UniformBufferObject
+{
+    float mousePosition[2];
+    float mouseMove[2];
+};
+
+uint32_t findMemoryTypeIndex(const vk::raii::PhysicalDevice& physicalDevice,
+                             vk::MemoryRequirements requirements)
+{
+    uint32_t memoryTypeIndex;
+    vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
+    for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
+        if (requirements.memoryTypeBits & (1 << index)) {
+            memoryTypeIndex = index;
+        }
+    }
+    return memoryTypeIndex;
+}
+
 struct Image
 {
     Image(const vk::raii::Device& device,
@@ -145,14 +169,8 @@ struct Image
     vk::MemoryAllocateInfo makeMemoryAllocationInfo(const vk::raii::Device& device,
                                                     const vk::raii::PhysicalDevice& physicalDevice)
     {
-        uint32_t memoryTypeIndex;
         vk::MemoryRequirements requirements = image.getMemoryRequirements();
-        vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
-        for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
-            if (requirements.memoryTypeBits & (1 << index)) {
-                memoryTypeIndex = index;
-            }
-        }
+        uint32_t memoryTypeIndex = findMemoryTypeIndex(physicalDevice, requirements);
 
         vk::MemoryAllocateInfo memoryAllocateInfo;
         memoryAllocateInfo.setAllocationSize(requirements.size);
@@ -175,6 +193,55 @@ struct Image
     vk::raii::Image image;
     vk::raii::DeviceMemory memory;
     vk::raii::ImageView view;
+};
+
+struct Buffer
+{
+    Buffer(const vk::raii::Device& device,
+           const vk::raii::PhysicalDevice& physicalDevice,
+           const vk::raii::CommandBuffer& commandBuffer,
+           const vk::raii::Queue& queue,
+           vk::DeviceSize size)
+        : size{ size }
+        , buffer{ device, makeBufferCreateInfo(size) }
+        , memory{ device, makeMemoryAllocationInfo(device, physicalDevice) }
+    {
+        buffer.bindMemory(*memory, 0);
+    }
+
+    vk::BufferCreateInfo makeBufferCreateInfo(vk::DeviceSize size)
+    {
+        vk::BufferCreateInfo createInfo;
+        createInfo.setSize(size);
+        createInfo.setUsage(vk::BufferUsageFlagBits::eUniformBuffer);
+        return createInfo;
+    }
+
+    vk::MemoryAllocateInfo makeMemoryAllocationInfo(const vk::raii::Device& device,
+                                                    const vk::raii::PhysicalDevice& physicalDevice)
+    {
+        vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+        vk::MemoryRequirements requirements = buffer.getMemoryRequirements();
+        uint32_t memoryTypeIndex = findMemoryTypeIndex(physicalDevice, requirements);
+
+        vk::MemoryAllocateInfo memoryAllocateInfo;
+        memoryAllocateInfo.setAllocationSize(requirements.size);
+        memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);
+        return memoryAllocateInfo;
+    }
+
+    void copy(void* data)
+    {
+        if (!mapped) {
+            mapped = memory.mapMemory(0, size);
+        }
+        memcpy(mapped, data, size);
+    }
+
+    vk::DeviceSize size;
+    vk::raii::Buffer buffer;
+    vk::raii::DeviceMemory memory;
+    void* mapped = nullptr;
 };
 
 struct ComputeKernel
@@ -253,6 +320,23 @@ struct ComputeKernel
         imageWrite.setImageInfo(descImageInfo);
 
         device.updateDescriptorSets(imageWrite, nullptr);
+    }
+
+    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Buffer& buffer)
+    {
+        vk::DescriptorBufferInfo descBufferInfo;
+        descBufferInfo.setBuffer(*buffer.buffer);
+        descBufferInfo.setOffset(0);
+        descBufferInfo.setRange(buffer.size);
+
+        vk::WriteDescriptorSet bufferWrite;
+        bufferWrite.setDstSet(*descSet);
+        bufferWrite.setDescriptorType(vk::DescriptorType::eUniformBuffer);
+        bufferWrite.setDescriptorCount(count);
+        bufferWrite.setDstBinding(binding);
+        bufferWrite.setBufferInfo(descBufferInfo);
+
+        device.updateDescriptorSets(bufferWrite, nullptr);
     }
 
     void run(const vk::raii::CommandBuffer& commandBuffer, uint32_t groupCountX, uint32_t groupCountY)
@@ -389,21 +473,20 @@ int main()
         vk::raii::SwapchainKHR swapchain{ device, swapchainCreateInfo };
         std::vector swapChainImages = swapchain.getImages();
 
+        // Create resources
         Image renderImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
         Image velocityImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
+        Buffer uniformBuffer{ device, physicalDevice, commandBuffer, computeQueue, sizeof(UniformBufferObject) };
 
-        // Create compute pipeline
-        std::vector<vk::DescriptorSetLayoutBinding> renderKernelBindings{
-            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
-            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
-        };
-        std::vector<vk::DescriptorSetLayoutBinding> externalForceKernelBindings{
-            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
-        };
+        UniformBufferObject ubo;
+        ubo.mousePosition[0] = 0.0f;
+        ubo.mousePosition[1] = 1.0f;
+        uniformBuffer.copy(&ubo);
 
-        // Create descriptor set
+        // Create descriptor pool
         std::vector poolSizes{
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 10}
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 10},
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 10}
         };
         vk::DescriptorPoolCreateInfo descPoolCreateInfo;
         descPoolCreateInfo.setPoolSizes(poolSizes);
@@ -411,12 +494,23 @@ int main()
         descPoolCreateInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
         vk::raii::DescriptorPool descPool{ device, descPoolCreateInfo };
 
+        // Create compute pipeline
+        std::vector<vk::DescriptorSetLayoutBinding> renderKernelBindings{
+            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
+        };
+        std::vector<vk::DescriptorSetLayoutBinding> externalForceKernelBindings{
+            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+            {1, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+        };
+
+        // Create kernels
         ComputeKernel renderKernel{ device, renderShader, renderKernelBindings, descPool };
         ComputeKernel externalForceKernel{ device, externalForceShader, externalForceKernelBindings, descPool };
-
         renderKernel.updateDescriptorSet(device, 0, 1, renderImage);
         renderKernel.updateDescriptorSet(device, 1, 1, velocityImage);
         externalForceKernel.updateDescriptorSet(device, 0, 1, velocityImage);
+        externalForceKernel.updateDescriptorSet(device, 1, 1, uniformBuffer);
 
         // Main loop
         while (!glfwWindowShouldClose(window)) {
