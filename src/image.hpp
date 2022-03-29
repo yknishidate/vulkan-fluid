@@ -7,7 +7,7 @@ void setImageLayout(const vk::raii::CommandBuffer& commandBuffer,
     vk::PipelineStageFlags srcStageMask = vk::PipelineStageFlagBits::eAllCommands;
     vk::PipelineStageFlags dstStageMask = vk::PipelineStageFlagBits::eAllCommands;
 
-    vk::ImageMemoryBarrier barrier{};
+    vk::ImageMemoryBarrier barrier;
     barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
     barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
     barrier.setImage(image);
@@ -44,10 +44,12 @@ struct Image
           const vk::raii::PhysicalDevice& physicalDevice,
           const vk::raii::CommandBuffer& commandBuffer,
           const vk::raii::Queue& queue,
-          int width, int height)
-        : image{ device, makeImageCreateInfo(width, height) }
+          int width, int height,
+          vk::Format format = vk::Format::eR32G32B32A32Sfloat)
+        : image{ device, makeImageCreateInfo(width, height, format) }
         , memory{ device, makeMemoryAllocationInfo(device, physicalDevice) }
-        , view{ device, makeImageViewCreateInfo() }
+        , view{ device, makeImageViewCreateInfo(format) }
+        , sampler{ device, makeSamplerCreateInfo() }
     {
         // Set image layout
         commandBuffer.begin(vk::CommandBufferBeginInfo{});
@@ -60,17 +62,18 @@ struct Image
         queue.waitIdle();
     }
 
-    vk::ImageCreateInfo makeImageCreateInfo(uint32_t width, uint32_t height)
+    vk::ImageCreateInfo makeImageCreateInfo(uint32_t width, uint32_t height, vk::Format format)
     {
         vk::ImageCreateInfo imageCreateInfo;
         imageCreateInfo.setImageType(vk::ImageType::e2D);
-        imageCreateInfo.setFormat(vk::Format::eB8G8R8A8Unorm);
+        imageCreateInfo.setFormat(format);
         imageCreateInfo.setExtent({ width, height, 1 });
         imageCreateInfo.setMipLevels(1);
         imageCreateInfo.setArrayLayers(1);
         imageCreateInfo.setUsage(vk::ImageUsageFlagBits::eStorage |
                                  vk::ImageUsageFlagBits::eTransferSrc |
-                                 vk::ImageUsageFlagBits::eTransferDst);
+                                 vk::ImageUsageFlagBits::eTransferDst |
+                                 vk::ImageUsageFlagBits::eSampled);
         return imageCreateInfo;
     }
 
@@ -92,19 +95,32 @@ struct Image
         return memoryAllocateInfo;
     }
 
-    vk::ImageViewCreateInfo makeImageViewCreateInfo()
+    vk::ImageViewCreateInfo makeImageViewCreateInfo(vk::Format format)
     {
         image.bindMemory(*memory, 0);
 
         vk::ImageViewCreateInfo imageViewCreateInfo;
         imageViewCreateInfo.setImage(*image);
         imageViewCreateInfo.setViewType(vk::ImageViewType::e2D);
-        imageViewCreateInfo.setFormat(vk::Format::eB8G8R8A8Unorm);
+        imageViewCreateInfo.setFormat(format);
         imageViewCreateInfo.setSubresourceRange({ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 });
         return imageViewCreateInfo;
+    }
+
+    vk::SamplerCreateInfo makeSamplerCreateInfo()
+    {
+        vk::SamplerCreateInfo createInfo;
+        createInfo.setMagFilter(vk::Filter::eLinear);
+        createInfo.setMinFilter(vk::Filter::eLinear);
+        createInfo.setAnisotropyEnable(VK_FALSE);
+        createInfo.setMaxLod(0.0f);
+        createInfo.setMinLod(0.0f);
+        createInfo.setMipmapMode(vk::SamplerMipmapMode::eLinear);
+        return createInfo;
     }
 
     vk::raii::Image image;
     vk::raii::DeviceMemory memory;
     vk::raii::ImageView view;
+    vk::raii::Sampler sampler;
 };

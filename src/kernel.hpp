@@ -94,15 +94,17 @@ struct ComputeKernel
         return allocateInfo;
     }
 
-    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Image& image)
+    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Image& image,
+                             vk::DescriptorType descType = vk::DescriptorType::eStorageImage)
     {
         vk::DescriptorImageInfo descImageInfo;
         descImageInfo.setImageView(*image.view);
         descImageInfo.setImageLayout(vk::ImageLayout::eGeneral);
+        descImageInfo.setSampler(*image.sampler);
 
         vk::WriteDescriptorSet imageWrite;
         imageWrite.setDstSet(*descSet);
-        imageWrite.setDescriptorType(vk::DescriptorType::eStorageImage);
+        imageWrite.setDescriptorType(descType);
         imageWrite.setDescriptorCount(count);
         imageWrite.setDstBinding(binding);
         imageWrite.setImageInfo(descImageInfo);
@@ -110,7 +112,8 @@ struct ComputeKernel
         device.updateDescriptorSets(imageWrite, nullptr);
     }
 
-    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Buffer& buffer)
+    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Buffer& buffer,
+                             vk::DescriptorType descType = vk::DescriptorType::eUniformBuffer)
     {
         vk::DescriptorBufferInfo descBufferInfo;
         descBufferInfo.setBuffer(*buffer.buffer);
@@ -119,7 +122,7 @@ struct ComputeKernel
 
         vk::WriteDescriptorSet bufferWrite;
         bufferWrite.setDstSet(*descSet);
-        bufferWrite.setDescriptorType(vk::DescriptorType::eUniformBuffer);
+        bufferWrite.setDescriptorType(descType);
         bufferWrite.setDescriptorCount(count);
         bufferWrite.setDstBinding(binding);
         bufferWrite.setBufferInfo(descBufferInfo);

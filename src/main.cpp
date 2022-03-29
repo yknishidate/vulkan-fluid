@@ -1,5 +1,6 @@
 #include <string>
 #include <iostream>
+#include <chrono>
 #include <vulkan/vulkan_raii.hpp>
 #include <GLFW/glfw3.h>
 #include <SPIRV/GlslangToSpv.h>
@@ -18,11 +19,34 @@ layout(binding = 1) uniform UniformBufferObject {
 } ubo;
 void main()
 {
-    float mouseSize = 50.0;
+    float mouseSize = 100.0;
     float dist = length(gl_GlobalInvocationID.xy - ubo.mousePosition);
     if(dist < mouseSize){
-        imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(1));
+        vec2 force = ubo.mouseMove * 0.01;
+        imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(force, 0, 1));
     }
+}
+)";
+
+const std::string advectShader = R"(
+#version 460
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(binding = 0) uniform sampler2D inVelocitySampler;
+layout(binding = 1, rgba8) uniform image2D outVelocityImage;
+
+vec2 toUV(vec2 value)
+{
+    return value / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+}
+
+void main()
+{
+    vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+    vec2 velocity = texture(inVelocitySampler, uv).xy;
+    float dt = 10.0;
+    vec2 offset = -velocity * dt;
+    velocity = texture(inVelocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(0.5) + offset)).xy;
+    imageStore(outVelocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(velocity, 0, 1));
 }
 )";
 
@@ -33,8 +57,8 @@ layout(binding = 0, rgba8) uniform image2D renderImage;
 layout(binding = 1, rgba8) uniform image2D velocityImage;
 void main()
 {
-    vec4 velocity = imageLoad(velocityImage, ivec2(gl_GlobalInvocationID.xy));
-    imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), velocity);
+    vec2 velocity = imageLoad(velocityImage, ivec2(gl_GlobalInvocationID.xy)).xy + 0.5;
+    imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), vec4(velocity, 0, 1));
 }
 )";
 
@@ -45,6 +69,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsMessengerCallback(
     void* pUserData)
 {
     std::cerr << pCallbackData->pMessage << std::endl;
+    assert(false);
     return VK_FALSE;
 }
 
@@ -174,8 +199,9 @@ int main()
         std::vector swapChainImages = swapchain.getImages();
 
         // Create resources
-        Image renderImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
-        Image velocityImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
+        Image renderImage{ device, physicalDevice, commandBuffer, computeQueue, width, height, vk::Format::eB8G8R8A8Unorm };
+        Image velocityImage0{ device, physicalDevice, commandBuffer, computeQueue, width, height };
+        Image velocityImage1{ device, physicalDevice, commandBuffer, computeQueue, width, height };
         Buffer uniformBuffer{ device, physicalDevice, commandBuffer, computeQueue, sizeof(UniformBufferObject) };
 
         UniformBufferObject ubo;
@@ -188,7 +214,8 @@ int main()
         // Create descriptor pool
         std::vector poolSizes{
             vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 10},
-            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 10}
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 10},
+            vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 10},
         };
         vk::DescriptorPoolCreateInfo descPoolCreateInfo;
         descPoolCreateInfo.setPoolSizes(poolSizes);
@@ -197,24 +224,33 @@ int main()
         vk::raii::DescriptorPool descPool{ device, descPoolCreateInfo };
 
         // Create compute pipeline
-        std::vector<vk::DescriptorSetLayoutBinding> renderKernelBindings{
-            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
-            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
-        };
         std::vector<vk::DescriptorSetLayoutBinding> externalForceKernelBindings{
             {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
             {1, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute},
         };
+        std::vector<vk::DescriptorSetLayoutBinding> advectKernelBindings{
+            {0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eCompute},
+            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+        };
+        std::vector<vk::DescriptorSetLayoutBinding> renderKernelBindings{
+            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
+        };
 
         // Create kernels
-        ComputeKernel renderKernel{ device, renderShader, renderKernelBindings, descPool };
         ComputeKernel externalForceKernel{ device, externalForceShader, externalForceKernelBindings, descPool };
-        renderKernel.updateDescriptorSet(device, 0, 1, renderImage);
-        renderKernel.updateDescriptorSet(device, 1, 1, velocityImage);
-        externalForceKernel.updateDescriptorSet(device, 0, 1, velocityImage);
+        ComputeKernel advectKernel{ device, advectShader, advectKernelBindings, descPool };
+        ComputeKernel renderKernel{ device, renderShader, renderKernelBindings, descPool };
+        externalForceKernel.updateDescriptorSet(device, 0, 1, velocityImage0);
         externalForceKernel.updateDescriptorSet(device, 1, 1, uniformBuffer);
+        advectKernel.updateDescriptorSet(device, 0, 1, velocityImage0, vk::DescriptorType::eCombinedImageSampler);
+        advectKernel.updateDescriptorSet(device, 1, 1, velocityImage1);
+        renderKernel.updateDescriptorSet(device, 0, 1, renderImage);
+        renderKernel.updateDescriptorSet(device, 1, 1, velocityImage1);
 
         // Main loop
+        uint32_t frame = 0;
+        auto startTime = std::chrono::high_resolution_clock::now();
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
@@ -236,11 +272,16 @@ int main()
             commandBuffer.reset();
             commandBuffer.begin(vk::CommandBufferBeginInfo{});
             externalForceKernel.run(commandBuffer, width, height);
+            advectKernel.run(commandBuffer, width, height);
             renderKernel.run(commandBuffer, width, height);
 
             // Copy render image
+            //// render -> swapchain
+            //// velocity1 -> velocity0
             setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
             setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+            setImageLayout(commandBuffer, *velocityImage1.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
+            setImageLayout(commandBuffer, *velocityImage0.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
             vk::ImageCopy copyRegion;
             copyRegion.setSrcSubresource({ vk::ImageAspectFlagBits::eColor, 0, 0, 1 });
@@ -248,9 +289,13 @@ int main()
             copyRegion.setExtent({ width, height, 1 });
             commandBuffer.copyImage(*renderImage.image, vk::ImageLayout::eTransferSrcOptimal,
                                     swapChainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
+            commandBuffer.copyImage(*velocityImage1.image, vk::ImageLayout::eTransferSrcOptimal,
+                                    *velocityImage0.image, vk::ImageLayout::eTransferDstOptimal, copyRegion);
 
             setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
             setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
+            setImageLayout(commandBuffer, *velocityImage0.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral);
+            setImageLayout(commandBuffer, *velocityImage1.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
 
             commandBuffer.end();
 
@@ -266,6 +311,14 @@ int main()
             presentInfo.setImageIndices(imageIndex);
             presentQueue.presentKHR(presentInfo);
             presentQueue.waitIdle();
+
+            frame++;
+            if (frame % 100 == 0) {
+                auto endTime = std::chrono::high_resolution_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+                std::cout << 100000.0f / elapsed << std::endl;
+                startTime = std::chrono::high_resolution_clock::now();
+            }
         }
         glfwDestroyWindow(window);
         glfwTerminate();
