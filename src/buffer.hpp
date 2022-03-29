@@ -5,8 +5,6 @@ struct Buffer
 {
     Buffer(vk::Device device,
            vk::PhysicalDevice physicalDevice,
-           vk::CommandBuffer commandBuffer,
-           vk::Queue queue,
            vk::DeviceSize size)
         : device{ device }
         , size{ size }

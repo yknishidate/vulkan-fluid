@@ -142,7 +142,7 @@ int main()
         swapchainCreateInfo.setPresentMode(vk::PresentModeKHR::eFifo);
         swapchainCreateInfo.setClipped(true);
         vk::UniqueSwapchainKHR swapchain = device->createSwapchainKHRUnique(swapchainCreateInfo);
-        std::vector swapChainImages = device->getSwapchainImagesKHR(*swapchain);
+        std::vector swapchainImages = device->getSwapchainImagesKHR(*swapchain);
 
         // Create resources
         Image renderImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height, vk::Format::eB8G8R8A8Unorm };
@@ -151,7 +151,7 @@ int main()
         Image divergenceImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
         Image pressureImage0{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
         Image pressureImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
-        Buffer uniformBuffer{ *device, physicalDevice, *commandBuffer, computeQueue, sizeof(UniformBufferObject) };
+        Buffer uniformBuffer{ *device, physicalDevice, sizeof(UniformBufferObject) };
 
         UniformBufferObject ubo;
         ubo.mousePosition[0] = 0.0f;
@@ -238,7 +238,7 @@ int main()
             // Acquire next image
             vk::UniqueSemaphore semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{});
             uint32_t imageIndex = device->acquireNextImageKHR(*swapchain, UINT64_MAX, *semaphore).value;
-            auto swapChainImage = swapChainImages[imageIndex];
+            vk::Image swapchainImage = swapchainImages[imageIndex];
 
             // Dispatch compute shader
             commandBuffer->begin(vk::CommandBufferBeginInfo{});
@@ -270,11 +270,11 @@ int main()
             // Copy render image
             //// render -> swapchain
             setImageLayout(*commandBuffer, *renderImage.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
-            setImageLayout(*commandBuffer, swapChainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+            setImageLayout(*commandBuffer, swapchainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
             commandBuffer->copyImage(*renderImage.image, vk::ImageLayout::eTransferSrcOptimal,
-                                     swapChainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
+                                     swapchainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
             setImageLayout(*commandBuffer, *renderImage.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
-            setImageLayout(*commandBuffer, swapChainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
+            setImageLayout(*commandBuffer, swapchainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
 
             commandBuffer->end();
 
