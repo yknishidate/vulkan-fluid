@@ -78,8 +78,8 @@ int main()
         vk::UniqueSurfaceKHR surface{ _surface, {*instance} };
 
         // Find queue families
-        uint32_t computeFamily;
-        uint32_t presentFamily;
+        uint32_t computeFamily = std::numeric_limits<uint32_t>::max();
+        uint32_t presentFamily = std::numeric_limits<uint32_t>::max();
         std::vector queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
         for (uint32_t index = 0; index < queueFamilyProperties.size(); index++) {
             if (queueFamilyProperties[index].queueFlags & vk::QueueFlagBits::eCompute) {
@@ -88,6 +88,10 @@ int main()
             if (physicalDevice.getSurfaceSupportKHR(index, *surface)) {
                 presentFamily = index;
             }
+        }
+        if (computeFamily == std::numeric_limits<uint32_t>::max() ||
+            presentFamily == std::numeric_limits<uint32_t>::max()) {
+            throw std::exception("Failed to find queue families.");
         }
 
         // Create device
@@ -225,15 +229,15 @@ int main()
             // Get mouse input
             double xpos, ypos;
             glfwGetCursorPos(window, &xpos, &ypos);
-            ubo.mouseMove[0] = xpos - ubo.mousePosition[0];
-            ubo.mouseMove[1] = ypos - ubo.mousePosition[1];
-            ubo.mousePosition[0] = xpos;
-            ubo.mousePosition[1] = ypos;
+            ubo.mouseMove[0] = static_cast<float>(xpos) - ubo.mousePosition[0];
+            ubo.mouseMove[1] = static_cast<float>(ypos) - ubo.mousePosition[1];
+            ubo.mousePosition[0] = static_cast<float>(xpos);
+            ubo.mousePosition[1] = static_cast<float>(ypos);
             uniformBuffer.copy(&ubo);
 
             // Acquire next image
             vk::UniqueSemaphore semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{});
-            uint32_t imageIndex = device->acquireNextImageKHR(*swapchain, UINT64_MAX, *semaphore);
+            uint32_t imageIndex = device->acquireNextImageKHR(*swapchain, UINT64_MAX, *semaphore).value;
             auto swapChainImage = swapChainImages[imageIndex];
 
             // Dispatch compute shader
@@ -284,7 +288,9 @@ int main()
             vk::PresentInfoKHR presentInfo;
             presentInfo.setSwapchains(*swapchain);
             presentInfo.setImageIndices(imageIndex);
-            presentQueue.presentKHR(presentInfo);
+            if (presentQueue.presentKHR(presentInfo) != vk::Result::eSuccess) {
+                throw std::exception("Failed to present.");
+            }
             presentQueue.waitIdle();
 
             frame++;

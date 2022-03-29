@@ -4,13 +4,13 @@ struct Timer
 {
     void start()
     {
-        startTime = std::chrono::high_resolution_clock::now();
+        startTime = std::chrono::steady_clock::now();
     }
 
-    double elapsed()
+    long long elapsed()
     {
-        auto endTime = std::chrono::high_resolution_clock::now();
-        double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        auto endTime = std::chrono::steady_clock::now();
+        long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
         return elapsed;
     }
 
