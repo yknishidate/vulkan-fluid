@@ -18,10 +18,11 @@ layout(binding = 1) uniform UniformBufferObject {
 } ubo;
 void main()
 {
-    //vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-    //imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
-    vec2 color = ubo.mousePosition / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-    imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(color, 0, 1));
+    float mouseSize = 50.0;
+    float dist = length(gl_GlobalInvocationID.xy - ubo.mousePosition);
+    if(dist < mouseSize){
+        imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(1));
+    }
 }
 )";
 
@@ -179,7 +180,9 @@ int main()
 
         UniformBufferObject ubo;
         ubo.mousePosition[0] = 0.0f;
-        ubo.mousePosition[1] = 1.0f;
+        ubo.mousePosition[1] = 0.0f;
+        ubo.mouseMove[0] = 0.0f;
+        ubo.mouseMove[1] = 0.0f;
         uniformBuffer.copy(&ubo);
 
         // Create descriptor pool
@@ -215,9 +218,11 @@ int main()
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
-            // Get mouse positions
+            // Get mouse input
             double xpos, ypos;
             glfwGetCursorPos(window, &xpos, &ypos);
+            ubo.mouseMove[0] = xpos - ubo.mousePosition[0];
+            ubo.mouseMove[1] = ypos - ubo.mousePosition[1];
             ubo.mousePosition[0] = xpos;
             ubo.mousePosition[1] = ypos;
             uniformBuffer.copy(&ubo);
