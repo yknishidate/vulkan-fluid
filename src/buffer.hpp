@@ -1,33 +1,34 @@
 #pragma once
-#include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan.hpp>
 
 struct Buffer
 {
-    Buffer(const vk::raii::Device& device,
-           const vk::raii::PhysicalDevice& physicalDevice,
-           const vk::raii::CommandBuffer& commandBuffer,
-           const vk::raii::Queue& queue,
+    Buffer(vk::Device device,
+           vk::PhysicalDevice physicalDevice,
+           vk::CommandBuffer commandBuffer,
+           vk::Queue queue,
            vk::DeviceSize size)
-        : size{ size }
-        , buffer{ device, makeBufferCreateInfo(size) }
-        , memory{ device, makeMemoryAllocationInfo(device, physicalDevice) }
+        : device{ device }
+        , size{ size }
     {
-        buffer.bindMemory(*memory, 0);
+        createBuffer();
+        allocateMemory(physicalDevice);
+        bindMemory();
     }
 
-    vk::BufferCreateInfo makeBufferCreateInfo(vk::DeviceSize size)
+
+    void createBuffer()
     {
         vk::BufferCreateInfo createInfo;
         createInfo.setSize(size);
         createInfo.setUsage(vk::BufferUsageFlagBits::eUniformBuffer);
-        return createInfo;
+        buffer = device.createBufferUnique(createInfo);
     }
 
-    vk::MemoryAllocateInfo makeMemoryAllocationInfo(const vk::raii::Device& device,
-                                                    const vk::raii::PhysicalDevice& physicalDevice)
+    void allocateMemory(vk::PhysicalDevice physicalDevice)
     {
         vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-        vk::MemoryRequirements requirements = buffer.getMemoryRequirements();
+        vk::MemoryRequirements requirements = device.getBufferMemoryRequirements(*buffer);
         uint32_t memoryTypeIndex;
         vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
         for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
@@ -39,19 +40,25 @@ struct Buffer
         vk::MemoryAllocateInfo memoryAllocateInfo;
         memoryAllocateInfo.setAllocationSize(requirements.size);
         memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);
-        return memoryAllocateInfo;
+        memory = device.allocateMemoryUnique(memoryAllocateInfo);
+    }
+
+    void bindMemory()
+    {
+        device.bindBufferMemory(*buffer, *memory, 0);
     }
 
     void copy(void* data)
     {
         if (!mapped) {
-            mapped = memory.mapMemory(0, size);
+            mapped = device.mapMemory(*memory, 0, size);
         }
         memcpy(mapped, data, size);
     }
 
+    vk::Device device;
     vk::DeviceSize size;
-    vk::raii::Buffer buffer;
-    vk::raii::DeviceMemory memory;
+    vk::UniqueBuffer buffer;
+    vk::UniqueDeviceMemory memory;
     void* mapped = nullptr;
 };

@@ -1,5 +1,5 @@
 #pragma once
-#include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan.hpp>
 #include <SPIRV/GlslangToSpv.h>
 #include <StandAlone/ResourceLimits.h>
 
@@ -36,67 +36,69 @@ std::vector<unsigned int> compileToSPV(const std::string& glslShader)
 
 struct ComputeKernel
 {
-    ComputeKernel(const vk::raii::Device& device,
+    ComputeKernel(vk::Device device,
                   const std::string& code,
                   const std::vector<vk::DescriptorSetLayoutBinding>& bindings,
-                  const vk::raii::DescriptorPool& descPool)
-        : shaderModule{ device, makeShaderModuleCreateInfo(code) }
-        , descSetLayout{ device, makeDescSetLayoutCreateInfo(bindings) }
-        , pipelineLayout{ device, makePipelineLayoutCreateInfo(device) }
-        , pipeline{ device, nullptr, makeComputePipelineCreateInfo(device) }
-        , descSet{ std::move(vk::raii::DescriptorSets{ device, makeDescriptorSetAllocateInfo(descPool)}.front()) }
+                  vk::DescriptorPool descPool)
+        : device{ device }
     {
+        createShaderModule(code);
+        createDescSetLayout(bindings);
+        createPipelineLayout();
+        createComputePipeline();
+        allocateDescriptorSet(descPool);
     }
 
-    vk::ShaderModuleCreateInfo makeShaderModuleCreateInfo(const std::string& code)
+    void createShaderModule(const std::string& code)
     {
         spirvCode = compileToSPV(code);
         vk::ShaderModuleCreateInfo createInfo;
         createInfo.setCode(spirvCode);
-        return createInfo;
+        shaderModule = device.createShaderModuleUnique(createInfo);
     }
 
-    vk::DescriptorSetLayoutCreateInfo makeDescSetLayoutCreateInfo(
-        const std::vector<vk::DescriptorSetLayoutBinding>& bindings)
+    void createDescSetLayout(const std::vector<vk::DescriptorSetLayoutBinding>& bindings)
     {
         vk::DescriptorSetLayoutCreateInfo createInfo;
         createInfo.setBindings(bindings);
-        return createInfo;
+        descSetLayout = device.createDescriptorSetLayoutUnique(createInfo);
     }
 
-    vk::PipelineShaderStageCreateInfo makePipelineShaderStageCreateInfo()
-    {
-        vk::PipelineShaderStageCreateInfo createInfo;
-        createInfo.setStage(vk::ShaderStageFlagBits::eCompute);
-        createInfo.setModule(*shaderModule);
-        createInfo.setPName("main");
-        return createInfo;
-    }
-
-    vk::PipelineLayoutCreateInfo makePipelineLayoutCreateInfo(const vk::raii::Device& device)
+    void createPipelineLayout()
     {
         vk::PipelineLayoutCreateInfo createInfo;
         createInfo.setSetLayouts(*descSetLayout);
-        return createInfo;
+        pipelineLayout = device.createPipelineLayoutUnique(createInfo);
     }
 
-    vk::ComputePipelineCreateInfo makeComputePipelineCreateInfo(const vk::raii::Device& device)
+    void createComputePipeline()
     {
+        vk::PipelineShaderStageCreateInfo stage;
+        stage.setStage(vk::ShaderStageFlagBits::eCompute);
+        stage.setModule(*shaderModule);
+        stage.setPName("main");
+
         vk::ComputePipelineCreateInfo createInfo;
-        createInfo.setStage(makePipelineShaderStageCreateInfo());
+        createInfo.setStage(stage);
         createInfo.setLayout(*pipelineLayout);
-        return createInfo;
+        auto res = device.createComputePipelinesUnique({}, createInfo);
+        if (res.result != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to create ray tracing pipeline.");
+        }
+        pipeline = std::move(res.value.front());
+
     }
 
-    vk::DescriptorSetAllocateInfo makeDescriptorSetAllocateInfo(const vk::raii::DescriptorPool& descPool)
+    void allocateDescriptorSet(vk::DescriptorPool descPool)
     {
         vk::DescriptorSetAllocateInfo allocateInfo;
-        allocateInfo.setDescriptorPool(*descPool);
+        allocateInfo.setDescriptorPool(descPool);
         allocateInfo.setSetLayouts(*descSetLayout);
-        return allocateInfo;
+        std::vector descSets = device.allocateDescriptorSetsUnique(allocateInfo);
+        descSet = std::move(descSets.front());
     }
 
-    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Image& image,
+    void updateDescriptorSet(uint32_t binding, uint32_t count, const Image& image,
                              vk::DescriptorType descType = vk::DescriptorType::eStorageImage)
     {
         vk::DescriptorImageInfo descImageInfo;
@@ -114,7 +116,7 @@ struct ComputeKernel
         device.updateDescriptorSets(imageWrite, nullptr);
     }
 
-    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Buffer& buffer,
+    void updateDescriptorSet(uint32_t binding, uint32_t count, const Buffer& buffer,
                              vk::DescriptorType descType = vk::DescriptorType::eUniformBuffer)
     {
         vk::DescriptorBufferInfo descBufferInfo;
@@ -132,17 +134,18 @@ struct ComputeKernel
         device.updateDescriptorSets(bufferWrite, nullptr);
     }
 
-    void run(const vk::raii::CommandBuffer& commandBuffer, uint32_t groupCountX, uint32_t groupCountY)
+    void run(vk::CommandBuffer commandBuffer, uint32_t groupCountX, uint32_t groupCountY)
     {
         commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
         commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0, *descSet, nullptr);
         commandBuffer.dispatch(groupCountX, groupCountY, 1);
     }
 
+    vk::Device device;
     std::vector<unsigned int> spirvCode;
-    vk::raii::ShaderModule shaderModule;
-    vk::raii::DescriptorSetLayout descSetLayout;
-    vk::raii::PipelineLayout pipelineLayout;
-    vk::raii::Pipeline pipeline;
-    vk::raii::DescriptorSet descSet;
+    vk::UniqueShaderModule shaderModule;
+    vk::UniqueDescriptorSetLayout descSetLayout;
+    vk::UniquePipelineLayout pipelineLayout;
+    vk::UniquePipeline pipeline;
+    vk::UniqueDescriptorSet descSet;
 };

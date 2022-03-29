@@ -1,8 +1,8 @@
 #pragma once
-#include <vulkan/vulkan_raii.hpp>
+#include <vulkan/vulkan.hpp>
 
-void setImageLayout(const vk::raii::CommandBuffer& commandBuffer,
-                    vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
+void setImageLayout(vk::CommandBuffer commandBuffer, vk::Image image,
+                    vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
 {
     vk::PipelineStageFlags srcStageMask = vk::PipelineStageFlagBits::eAllCommands;
     vk::PipelineStageFlags dstStageMask = vk::PipelineStageFlagBits::eAllCommands;
@@ -40,29 +40,23 @@ void setImageLayout(const vk::raii::CommandBuffer& commandBuffer,
 
 struct Image
 {
-    Image(const vk::raii::Device& device,
-          const vk::raii::PhysicalDevice& physicalDevice,
-          const vk::raii::CommandBuffer& commandBuffer,
-          const vk::raii::Queue& queue,
+    Image(vk::Device device,
+          vk::PhysicalDevice physicalDevice,
+          vk::CommandBuffer commandBuffer,
+          vk::Queue queue,
           int width, int height,
           vk::Format format = vk::Format::eR32G32B32A32Sfloat)
-        : image{ device, makeImageCreateInfo(width, height, format) }
-        , memory{ device, makeMemoryAllocationInfo(device, physicalDevice) }
-        , view{ device, makeImageViewCreateInfo(format) }
-        , sampler{ device, makeSamplerCreateInfo() }
+        : device{ device }
     {
-        // Set image layout
-        commandBuffer.begin(vk::CommandBufferBeginInfo{});
-        setImageLayout(commandBuffer, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-        commandBuffer.end();
-
-        vk::SubmitInfo submitInfo;
-        submitInfo.setCommandBuffers(*commandBuffer);
-        queue.submit(submitInfo);
-        queue.waitIdle();
+        createImage(width, height, format);
+        allocateMemory(physicalDevice);
+        bindMemory();
+        createImageView(format);
+        createSampler();
+        transImageLayout(commandBuffer, queue);
     }
 
-    vk::ImageCreateInfo makeImageCreateInfo(uint32_t width, uint32_t height, vk::Format format)
+    void createImage(uint32_t width, uint32_t height, vk::Format format)
     {
         vk::ImageCreateInfo imageCreateInfo;
         imageCreateInfo.setImageType(vk::ImageType::e2D);
@@ -74,13 +68,12 @@ struct Image
                                  vk::ImageUsageFlagBits::eTransferSrc |
                                  vk::ImageUsageFlagBits::eTransferDst |
                                  vk::ImageUsageFlagBits::eSampled);
-        return imageCreateInfo;
+        image = device.createImageUnique(imageCreateInfo);
     }
 
-    vk::MemoryAllocateInfo makeMemoryAllocationInfo(const vk::raii::Device& device,
-                                                    const vk::raii::PhysicalDevice& physicalDevice)
+    void allocateMemory(vk::PhysicalDevice physicalDevice)
     {
-        vk::MemoryRequirements requirements = image.getMemoryRequirements();
+        vk::MemoryRequirements requirements = device.getImageMemoryRequirements(*image);
         uint32_t memoryTypeIndex;
         vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
         for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
@@ -92,22 +85,25 @@ struct Image
         vk::MemoryAllocateInfo memoryAllocateInfo;
         memoryAllocateInfo.setAllocationSize(requirements.size);
         memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);
-        return memoryAllocateInfo;
+        memory = device.allocateMemoryUnique(memoryAllocateInfo);
     }
 
-    vk::ImageViewCreateInfo makeImageViewCreateInfo(vk::Format format)
+    void bindMemory()
     {
-        image.bindMemory(*memory, 0); // hack
+        device.bindImageMemory(*image, *memory, 0);
+    }
 
+    void createImageView(vk::Format format)
+    {
         vk::ImageViewCreateInfo imageViewCreateInfo;
         imageViewCreateInfo.setImage(*image);
         imageViewCreateInfo.setViewType(vk::ImageViewType::e2D);
         imageViewCreateInfo.setFormat(format);
         imageViewCreateInfo.setSubresourceRange({ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 });
-        return imageViewCreateInfo;
+        view = device.createImageViewUnique(imageViewCreateInfo);
     }
 
-    vk::SamplerCreateInfo makeSamplerCreateInfo()
+    void createSampler()
     {
         vk::SamplerCreateInfo createInfo;
         createInfo.setMagFilter(vk::Filter::eLinear);
@@ -119,11 +115,24 @@ struct Image
         createInfo.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
         createInfo.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
         createInfo.setAddressModeW(vk::SamplerAddressMode::eClampToBorder);
-        return createInfo;
+        sampler = device.createSamplerUnique(createInfo);
     }
 
-    vk::raii::Image image;
-    vk::raii::DeviceMemory memory;
-    vk::raii::ImageView view;
-    vk::raii::Sampler sampler;
+    void transImageLayout(vk::CommandBuffer commandBuffer, vk::Queue queue)
+    {
+        commandBuffer.begin(vk::CommandBufferBeginInfo{});
+        setImageLayout(commandBuffer, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
+        commandBuffer.end();
+
+        vk::SubmitInfo submitInfo;
+        submitInfo.setCommandBuffers(commandBuffer);
+        queue.submit(submitInfo);
+        queue.waitIdle();
+    }
+
+    vk::Device device;
+    vk::UniqueImage image;
+    vk::UniqueDeviceMemory memory;
+    vk::UniqueImageView view;
+    vk::UniqueSampler sampler;
 };
