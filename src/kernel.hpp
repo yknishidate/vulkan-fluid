@@ -1,5 +1,7 @@
 #pragma once
 #include <vulkan/vulkan_raii.hpp>
+#include <SPIRV/GlslangToSpv.h>
+#include <StandAlone/ResourceLimits.h>
 
 std::vector<unsigned int> compileToSPV(const std::string& glslShader)
 {

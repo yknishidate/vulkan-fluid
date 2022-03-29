@@ -1,10 +1,8 @@
 #include <string>
-#include <iostream>
 #include <chrono>
+#include <iostream>
 #include <vulkan/vulkan_raii.hpp>
 #include <GLFW/glfw3.h>
-#include <SPIRV/GlslangToSpv.h>
-#include <StandAlone/ResourceLimits.h>
 #include "buffer.hpp"
 #include "image.hpp"
 #include "kernel.hpp"
@@ -21,7 +19,7 @@ void main()
 {
     float mouseSize = 120.0;
     float dist = length(gl_GlobalInvocationID.xy - ubo.mousePosition);
-    if(dist < mouseSize && length(ubo.mouseMove) > 10.0){
+    if(dist < mouseSize && length(ubo.mouseMove) > 4.0){
         vec2 force = ubo.mouseMove * 0.05;
         imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(force, 0, 1));
     }
@@ -124,7 +122,7 @@ void main()
     vec2 gradient = vec2(dx, dy);
 
     vec2 velocity = imageLoad(inVelocityImage, ivec2(gl_GlobalInvocationID.xy)).xy;
-    velocity = (velocity - gradient) * 0.99;
+    velocity = (velocity - gradient) * 0.995;
     imageStore(outVelocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(velocity, 0, 1));
     vec3 color = vec3(abs(velocity.x) * 3, 0, abs(velocity.y) * 3);
     imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), vec4(color, 1));
@@ -295,7 +293,7 @@ int main()
         descPoolCreateInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
         vk::raii::DescriptorPool descPool{ device, descPoolCreateInfo };
 
-        // Create compute pipeline
+        // Create bindings
         std::vector<vk::DescriptorSetLayoutBinding> externalForceKernelBindings{
             {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
             {1, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute},
@@ -378,6 +376,8 @@ int main()
             for (int i = 0; i < iteration; i++) {
                 pressureKernel.run(commandBuffer, width, height);
 
+                // Copy render image
+                //// pressureImage1 -> pressureImage0
                 setImageLayout(commandBuffer, *pressureImage1.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal);
                 setImageLayout(commandBuffer, *pressureImage0.image, vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferDstOptimal);
                 commandBuffer.copyImage(*pressureImage1.image, vk::ImageLayout::eTransferSrcOptimal,
@@ -390,19 +390,14 @@ int main()
 
             // Copy render image
             //// render -> swapchain
-            //// velocity1 -> velocity0
             setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
             setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-            setImageLayout(commandBuffer, *velocityImage1.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
-            setImageLayout(commandBuffer, *velocityImage0.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
             commandBuffer.copyImage(*renderImage.image, vk::ImageLayout::eTransferSrcOptimal,
                                     swapChainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
 
             setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
             setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
-            setImageLayout(commandBuffer, *velocityImage0.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral);
-            setImageLayout(commandBuffer, *velocityImage1.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
 
             commandBuffer.end();
 

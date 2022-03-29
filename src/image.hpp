@@ -97,7 +97,7 @@ struct Image
 
     vk::ImageViewCreateInfo makeImageViewCreateInfo(vk::Format format)
     {
-        image.bindMemory(*memory, 0);
+        image.bindMemory(*memory, 0); // hack
 
         vk::ImageViewCreateInfo imageViewCreateInfo;
         imageViewCreateInfo.setImage(*image);
