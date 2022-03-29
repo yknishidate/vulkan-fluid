@@ -14,7 +14,6 @@ struct Buffer
         bindMemory();
     }
 
-
     void createBuffer()
     {
         vk::BufferCreateInfo createInfo;
@@ -23,14 +22,18 @@ struct Buffer
         buffer = device.createBufferUnique(createInfo);
     }
 
-    void allocateMemory(vk::PhysicalDevice physicalDevice)
+    void allocateMemory(vk::PhysicalDevice physicalDevice,
+                        vk::MemoryPropertyFlags memoryProp =
+                        vk::MemoryPropertyFlagBits::eHostVisible |
+                        vk::MemoryPropertyFlagBits::eHostCoherent)
     {
-        vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
         vk::MemoryRequirements requirements = device.getBufferMemoryRequirements(*buffer);
         uint32_t memoryTypeIndex;
         vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
         for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
-            if (requirements.memoryTypeBits & (1 << index)) {
+            auto propertyFlags = memoryProperties.memoryTypes[index].propertyFlags;
+            bool match = (propertyFlags & memoryProp) == memoryProp;
+            if (requirements.memoryTypeBits & (1 << index) && match) {
                 memoryTypeIndex = index;
             }
         }

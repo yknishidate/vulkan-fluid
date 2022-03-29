@@ -71,13 +71,16 @@ struct Image
         image = device.createImageUnique(imageCreateInfo);
     }
 
-    void allocateMemory(vk::PhysicalDevice physicalDevice)
+    void allocateMemory(vk::PhysicalDevice physicalDevice,
+                        vk::MemoryPropertyFlags memoryProp = vk::MemoryPropertyFlagBits::eDeviceLocal)
     {
         vk::MemoryRequirements requirements = device.getImageMemoryRequirements(*image);
         uint32_t memoryTypeIndex;
         vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
         for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
-            if (requirements.memoryTypeBits & (1 << index)) {
+            auto propertyFlags = memoryProperties.memoryTypes[index].propertyFlags;
+            bool match = (propertyFlags & memoryProp) == memoryProp;
+            if (requirements.memoryTypeBits & (1 << index) && match) {
                 memoryTypeIndex = index;
             }
         }
