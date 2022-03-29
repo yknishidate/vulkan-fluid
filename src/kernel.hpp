@@ -15,14 +15,14 @@ std::vector<unsigned int> compileToSPV(const std::string& glslShader)
     EShMessages messages = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
 
     if (!shader.parse(&glslang::DefaultTBuiltInResource, 100, false, messages)) {
-        throw std::runtime_error(shader.getInfoLog());
+        throw std::runtime_error(glslShader + "\n" + shader.getInfoLog());
     }
 
     glslang::TProgram program;
     program.addShader(&shader);
 
     if (!program.link(messages)) {
-        throw std::runtime_error(shader.getInfoLog());
+        throw std::runtime_error(glslShader + "\n" + shader.getInfoLog());
     }
 
     std::vector<unsigned int> spvShader;

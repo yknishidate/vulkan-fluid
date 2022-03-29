@@ -116,6 +116,9 @@ struct Image
         createInfo.setMaxLod(0.0f);
         createInfo.setMinLod(0.0f);
         createInfo.setMipmapMode(vk::SamplerMipmapMode::eLinear);
+        createInfo.setAddressModeU(vk::SamplerAddressMode::eClampToBorder);
+        createInfo.setAddressModeV(vk::SamplerAddressMode::eClampToBorder);
+        createInfo.setAddressModeW(vk::SamplerAddressMode::eClampToBorder);
         return createInfo;
     }
 
