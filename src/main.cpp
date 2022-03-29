@@ -91,7 +91,7 @@ int main()
         }
         if (computeFamily == std::numeric_limits<uint32_t>::max() ||
             presentFamily == std::numeric_limits<uint32_t>::max()) {
-            throw std::exception("Failed to find queue families.");
+            throw std::runtime_error("Failed to find queue families.");
         }
 
         // Create device
@@ -289,7 +289,7 @@ int main()
             presentInfo.setSwapchains(*swapchain);
             presentInfo.setImageIndices(imageIndex);
             if (presentQueue.presentKHR(presentInfo) != vk::Result::eSuccess) {
-                throw std::exception("Failed to present.");
+                throw std::runtime_error("Failed to present.");
             }
             presentQueue.waitIdle();
 
