@@ -7,8 +7,8 @@ Simple 2D fluid simulation in Vulkan
 ## Clone
 
 ```
-git clone --recursive https://github.com/yknishidate/Vulkan-Fluid.git
-cd Vulkan-Fluid
+git clone --recursive https://github.com/yknishidate/vulkan-fluid.git
+cd vulkan-fluid
 ```
 
 ## Build & Run
