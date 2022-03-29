@@ -1,0 +1,16 @@
+#version 460
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(binding = 0, rgba32f) uniform image2D velocityImage;
+layout(binding = 1) uniform UniformBufferObject {
+    vec2 mousePosition;
+    vec2 mouseMove;
+} ubo;
+void main()
+{
+    float mouseSize = 120.0;
+    float dist = length(gl_GlobalInvocationID.xy - ubo.mousePosition);
+    if(dist < mouseSize && length(ubo.mouseMove) > 4.0){
+        vec2 force = ubo.mouseMove * 0.05;
+        imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(force, 0, 1));
+    }
+}

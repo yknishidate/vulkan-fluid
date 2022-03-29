@@ -1,0 +1,21 @@
+#version 460
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(binding = 0) uniform sampler2D velocitySampler;
+layout(binding = 1, rgba32f) uniform image2D divergenceImage;
+
+vec2 toUV(vec2 value)
+{
+    return (value + vec2(0.5)) / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+}
+
+void main()
+{
+    float vel_x0 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy - vec2(1, 0))).x;
+    float vel_x1 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(1, 0))).x;
+    float vel_y0 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy - vec2(0, 1))).y;
+    float vel_y1 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(0, 1))).y;
+    float dx = vel_x1 - vel_x0;
+    float dy = vel_y1 - vel_y0;
+    float divergence = (dx + dy) / 2.0;
+    imageStore(divergenceImage, ivec2(gl_GlobalInvocationID.xy), vec4(divergence));
+}

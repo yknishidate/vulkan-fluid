@@ -1,0 +1,22 @@
+#version 460
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(binding = 0) uniform sampler2D inPressureSampler;
+layout(binding = 1) uniform sampler2D divergenceSampler;
+layout(binding = 2, rgba32f) uniform image2D outPressureImage;
+
+vec2 toUV(vec2 value)
+{
+    return (value + vec2(0.5)) / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+}
+
+void main()
+{
+    vec2 uv = toUV(gl_GlobalInvocationID.xy);
+    float pres_x0 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy - vec2(1, 0))).x;
+    float pres_x1 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy + vec2(1, 0))).x;
+    float pres_y0 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy - vec2(0, 1))).x;
+    float pres_y1 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy + vec2(0, 1))).x;
+    float div = texture(divergenceSampler, uv).x;
+    float relaxed = (pres_x0 + pres_x1 + pres_y0 + pres_y1 - div) / 4.0;
+    imageStore(outPressureImage, ivec2(gl_GlobalInvocationID.xy), vec4(relaxed));
+}

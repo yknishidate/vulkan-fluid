@@ -1,7 +1,19 @@
 #pragma once
+#include <fstream>
+#include <sstream>
+#include <iostream>
 #include <vulkan/vulkan.hpp>
 #include <SPIRV/GlslangToSpv.h>
 #include <StandAlone/ResourceLimits.h>
+
+std::string readFile(const std::string& path)
+{
+    std::ifstream input_file(path);
+    if (!input_file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + path);
+    }
+    return std::string((std::istreambuf_iterator<char>(input_file)), std::istreambuf_iterator<char>());
+}
 
 std::vector<unsigned int> compileToSPV(const std::string& glslShader)
 {
@@ -37,20 +49,21 @@ std::vector<unsigned int> compileToSPV(const std::string& glslShader)
 struct ComputeKernel
 {
     ComputeKernel(vk::Device device,
-                  const std::string& code,
+                  const std::string& path,
                   const std::vector<vk::DescriptorSetLayoutBinding>& bindings,
                   vk::DescriptorPool descPool)
         : device{ device }
     {
-        createShaderModule(code);
+        createShaderModule(path);
         createDescSetLayout(bindings);
         createPipelineLayout();
         createComputePipeline();
         allocateDescriptorSet(descPool);
     }
 
-    void createShaderModule(const std::string& code)
+    void createShaderModule(const std::string& path)
     {
+        std::string code = readFile(path);
         spirvCode = compileToSPV(code);
         vk::ShaderModuleCreateInfo createInfo;
         createInfo.setCode(spirvCode);

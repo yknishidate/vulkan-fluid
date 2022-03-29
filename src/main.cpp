@@ -9,128 +9,6 @@
 #include "timer.hpp"
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
-const std::string externalForceShader = R"(
-#version 460
-layout(local_size_x = 1, local_size_y = 1) in;
-layout(binding = 0, rgba32f) uniform image2D velocityImage;
-layout(binding = 1) uniform UniformBufferObject {
-    vec2 mousePosition;
-    vec2 mouseMove;
-} ubo;
-void main()
-{
-    float mouseSize = 120.0;
-    float dist = length(gl_GlobalInvocationID.xy - ubo.mousePosition);
-    if(dist < mouseSize && length(ubo.mouseMove) > 4.0){
-        vec2 force = ubo.mouseMove * 0.05;
-        imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(force, 0, 1));
-    }
-}
-)";
-
-const std::string advectShader = R"(
-#version 460
-layout(local_size_x = 1, local_size_y = 1) in;
-layout(binding = 0) uniform sampler2D inVelocitySampler;
-layout(binding = 1, rgba32f) uniform image2D outVelocityImage;
-
-vec2 toUV(vec2 value)
-{
-    return (value + vec2(0.5)) / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-}
-
-void main()
-{
-    vec2 uv = toUV(gl_GlobalInvocationID.xy);
-    vec2 velocity = texture(inVelocitySampler, uv).xy;
-    float dt = 20.0;
-    vec2 offset = -velocity * dt;
-    velocity = texture(inVelocitySampler, toUV(gl_GlobalInvocationID.xy + offset)).xy;
-    imageStore(outVelocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(velocity, 0, 1));
-}
-)";
-
-const std::string divergenceShader = R"(
-#version 460
-layout(local_size_x = 1, local_size_y = 1) in;
-layout(binding = 0) uniform sampler2D velocitySampler;
-layout(binding = 1, rgba32f) uniform image2D divergenceImage;
-
-vec2 toUV(vec2 value)
-{
-    return (value + vec2(0.5)) / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-}
-
-void main()
-{
-    float vel_x0 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy - vec2(1, 0))).x;
-    float vel_x1 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(1, 0))).x;
-    float vel_y0 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy - vec2(0, 1))).y;
-    float vel_y1 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(0, 1))).y;
-    float dx = vel_x1 - vel_x0;
-    float dy = vel_y1 - vel_y0;
-    float divergence = (dx + dy) / 2.0;
-    imageStore(divergenceImage, ivec2(gl_GlobalInvocationID.xy), vec4(divergence));
-}
-)";
-
-const std::string pressureShader = R"(
-#version 460
-layout(local_size_x = 1, local_size_y = 1) in;
-layout(binding = 0) uniform sampler2D inPressureSampler;
-layout(binding = 1) uniform sampler2D divergenceSampler;
-layout(binding = 2, rgba32f) uniform image2D outPressureImage;
-
-vec2 toUV(vec2 value)
-{
-    return (value + vec2(0.5)) / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-}
-
-void main()
-{
-    vec2 uv = toUV(gl_GlobalInvocationID.xy);
-    float pres_x0 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy - vec2(1, 0))).x;
-    float pres_x1 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy + vec2(1, 0))).x;
-    float pres_y0 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy - vec2(0, 1))).x;
-    float pres_y1 = texture(inPressureSampler, toUV(gl_GlobalInvocationID.xy + vec2(0, 1))).x;
-    float div = texture(divergenceSampler, uv).x;
-    float relaxed = (pres_x0 + pres_x1 + pres_y0 + pres_y1 - div) / 4.0;
-    imageStore(outPressureImage, ivec2(gl_GlobalInvocationID.xy), vec4(relaxed));
-}
-)";
-
-const std::string renderShader = R"(
-#version 460
-layout(local_size_x = 1, local_size_y = 1) in;
-layout(binding = 0, rgba8) uniform image2D renderImage;
-layout(binding = 1, rgba32f) uniform image2D inVelocityImage;
-layout(binding = 2, rgba32f) uniform image2D divergenceImage;
-layout(binding = 3, rgba32f) uniform image2D pressureImage;
-layout(binding = 4, rgba32f) uniform image2D outVelocityImage;
-
-vec2 toUV(vec2 value)
-{
-    return (value + vec2(0.5)) / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-}
-
-void main()
-{
-    float pres_x0 = imageLoad(pressureImage, ivec2(gl_GlobalInvocationID.xy - vec2(1, 0))).x;
-    float pres_x1 = imageLoad(pressureImage, ivec2(gl_GlobalInvocationID.xy + vec2(1, 0))).x;
-    float pres_y0 = imageLoad(pressureImage, ivec2(gl_GlobalInvocationID.xy - vec2(0, 1))).y;
-    float pres_y1 = imageLoad(pressureImage, ivec2(gl_GlobalInvocationID.xy + vec2(0, 1))).y;
-    float dx = (pres_x1 - pres_x0) / 2.0;
-    float dy = (pres_y1 - pres_y0) / 2.0;
-    vec2 gradient = vec2(dx, dy);
-
-    vec2 velocity = imageLoad(inVelocityImage, ivec2(gl_GlobalInvocationID.xy)).xy;
-    velocity = (velocity - gradient) * 0.995;
-    imageStore(outVelocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(velocity, 0, 1));
-    vec3 color = vec3(abs(velocity.x) * 3, 0, abs(velocity.y) * 3);
-    imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), vec4(color, 1));
-}
-)";
-
 VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsMessengerCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageTypes,
@@ -317,11 +195,11 @@ int main()
         };
 
         // Create kernels
-        ComputeKernel externalForceKernel{ *device, externalForceShader, externalForceKernelBindings, *descPool };
-        ComputeKernel advectKernel{ *device, advectShader, advectKernelBindings, *descPool };
-        ComputeKernel divergenceKernel{ *device, divergenceShader, divergenceKernelBindings, *descPool };
-        ComputeKernel pressureKernel{ *device, pressureShader, pressureKernelBindings, *descPool };
-        ComputeKernel renderKernel{ *device, renderShader, renderKernelBindings, *descPool };
+        ComputeKernel externalForceKernel{ *device, "shader/externalForce.comp", externalForceKernelBindings, *descPool };
+        ComputeKernel advectKernel{ *device, "shader/advect.comp", advectKernelBindings, *descPool };
+        ComputeKernel divergenceKernel{ *device, "shader/divergence.comp", divergenceKernelBindings, *descPool };
+        ComputeKernel pressureKernel{ *device, "shader/pressure.comp", pressureKernelBindings, *descPool };
+        ComputeKernel renderKernel{ *device, "shader/render.comp", renderKernelBindings, *descPool };
         externalForceKernel.updateDescriptorSet(0, 1, velocityImage0);
         externalForceKernel.updateDescriptorSet(1, 1, uniformBuffer);
         advectKernel.updateDescriptorSet(0, 1, velocityImage0, vk::DescriptorType::eCombinedImageSampler);

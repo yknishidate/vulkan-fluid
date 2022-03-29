@@ -29,3 +29,5 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/external/glm"
     "${PROJECT_SOURCE_DIR}/external/glslang"
 )
+
+file(COPY "${CMAKE_SOURCE_DIR}/shader" DESTINATION ${CMAKE_BINARY_DIR})
