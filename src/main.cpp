@@ -1,12 +1,12 @@
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <string>
-#include <chrono>
 #include <iostream>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
 #include "buffer.hpp"
 #include "image.hpp"
 #include "kernel.hpp"
+#include "timer.hpp"
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 const std::string externalForceShader = R"(
@@ -339,7 +339,8 @@ int main()
 
         // Main loop
         uint32_t frame = 0;
-        auto startTime = std::chrono::high_resolution_clock::now();
+        Timer timer;
+        timer.start();
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
@@ -410,10 +411,8 @@ int main()
 
             frame++;
             if (frame % 100 == 0) {
-                auto endTime = std::chrono::high_resolution_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-                std::cout << 100000.0f / elapsed << " fps" << std::endl;
-                startTime = std::chrono::high_resolution_clock::now();
+                std::cout << 100000.0f / timer.elapsed() << " fps" << std::endl;
+                timer.start();
             }
         }
         glfwDestroyWindow(window);
