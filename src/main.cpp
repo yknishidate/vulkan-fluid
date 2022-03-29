@@ -5,14 +5,26 @@
 #include <SPIRV/GlslangToSpv.h>
 #include <StandAlone/ResourceLimits.h>
 
-const std::string computeShader = R"(
+const std::string externalForceShader = R"(
 #version 460
 layout(local_size_x = 1, local_size_y = 1) in;
-layout(binding = 0, set = 0, rgba8) uniform image2D renderImage;
+layout(binding = 0, rgba8) uniform image2D velocityImage;
 void main()
 {
     vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
-    imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
+    imageStore(velocityImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0, 1));
+}
+)";
+
+const std::string renderShader = R"(
+#version 460
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(binding = 0, rgba8) uniform image2D renderImage;
+layout(binding = 1, rgba8) uniform image2D velocityImage;
+void main()
+{
+    vec4 velocity = imageLoad(velocityImage, ivec2(gl_GlobalInvocationID.xy));
+    imageStore(renderImage, ivec2(gl_GlobalInvocationID.xy), velocity);
 }
 )";
 
@@ -94,6 +106,170 @@ void setImageLayout(const vk::raii::CommandBuffer& commandBuffer,
     commandBuffer.pipelineBarrier(srcStageMask, dstStageMask, {}, {}, {}, barrier);
 }
 
+struct Image
+{
+    Image(const vk::raii::Device& device,
+          const vk::raii::PhysicalDevice& physicalDevice,
+          const vk::raii::CommandBuffer& commandBuffer,
+          const vk::raii::Queue& queue,
+          int width, int height)
+        : image{ device, makeImageCreateInfo(width, height) }
+        , memory{ device, makeMemoryAllocationInfo(device, physicalDevice) }
+        , view{ device, makeImageViewCreateInfo() }
+    {
+        // Set image layout
+        commandBuffer.begin(vk::CommandBufferBeginInfo{});
+        setImageLayout(commandBuffer, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
+        commandBuffer.end();
+
+        vk::SubmitInfo submitInfo;
+        submitInfo.setCommandBuffers(*commandBuffer);
+        queue.submit(submitInfo);
+        queue.waitIdle();
+    }
+
+    vk::ImageCreateInfo makeImageCreateInfo(uint32_t width, uint32_t height)
+    {
+        vk::ImageCreateInfo imageCreateInfo;
+        imageCreateInfo.setImageType(vk::ImageType::e2D);
+        imageCreateInfo.setFormat(vk::Format::eB8G8R8A8Unorm);
+        imageCreateInfo.setExtent({ width, height, 1 });
+        imageCreateInfo.setMipLevels(1);
+        imageCreateInfo.setArrayLayers(1);
+        imageCreateInfo.setUsage(vk::ImageUsageFlagBits::eStorage |
+                                 vk::ImageUsageFlagBits::eTransferSrc |
+                                 vk::ImageUsageFlagBits::eTransferDst);
+        return imageCreateInfo;
+    }
+
+    vk::MemoryAllocateInfo makeMemoryAllocationInfo(const vk::raii::Device& device,
+                                                    const vk::raii::PhysicalDevice& physicalDevice)
+    {
+        uint32_t memoryTypeIndex;
+        vk::MemoryRequirements requirements = image.getMemoryRequirements();
+        vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
+        for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
+            if (requirements.memoryTypeBits & (1 << index)) {
+                memoryTypeIndex = index;
+            }
+        }
+
+        vk::MemoryAllocateInfo memoryAllocateInfo;
+        memoryAllocateInfo.setAllocationSize(requirements.size);
+        memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);
+        return memoryAllocateInfo;
+    }
+
+    vk::ImageViewCreateInfo makeImageViewCreateInfo()
+    {
+        image.bindMemory(*memory, 0);
+
+        vk::ImageViewCreateInfo imageViewCreateInfo;
+        imageViewCreateInfo.setImage(*image);
+        imageViewCreateInfo.setViewType(vk::ImageViewType::e2D);
+        imageViewCreateInfo.setFormat(vk::Format::eB8G8R8A8Unorm);
+        imageViewCreateInfo.setSubresourceRange({ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 });
+        return imageViewCreateInfo;
+    }
+
+    vk::raii::Image image;
+    vk::raii::DeviceMemory memory;
+    vk::raii::ImageView view;
+};
+
+struct ComputeKernel
+{
+    ComputeKernel(const vk::raii::Device& device,
+                  const std::string& code,
+                  const std::vector<vk::DescriptorSetLayoutBinding>& bindings,
+                  const vk::raii::DescriptorPool& descPool)
+        : shaderModule{ device, makeShaderModuleCreateInfo(code) }
+        , descSetLayout{ device, makeDescSetLayoutCreateInfo(bindings) }
+        , pipelineLayout{ device, makePipelineLayoutCreateInfo(device) }
+        , pipeline{ device, nullptr, makeComputePipelineCreateInfo(device) }
+        , descSet{ std::move(vk::raii::DescriptorSets{ device, makeDescriptorSetAllocateInfo(descPool)}.front()) }
+    {
+    }
+
+    vk::ShaderModuleCreateInfo makeShaderModuleCreateInfo(const std::string& code)
+    {
+        spirvCode = compileToSPV(code);
+        vk::ShaderModuleCreateInfo createInfo;
+        createInfo.setCode(spirvCode);
+        return createInfo;
+    }
+
+    vk::DescriptorSetLayoutCreateInfo makeDescSetLayoutCreateInfo(
+        const std::vector<vk::DescriptorSetLayoutBinding>& bindings)
+    {
+        vk::DescriptorSetLayoutCreateInfo createInfo;
+        createInfo.setBindings(bindings);
+        return createInfo;
+    }
+
+    vk::PipelineShaderStageCreateInfo makePipelineShaderStageCreateInfo()
+    {
+        vk::PipelineShaderStageCreateInfo createInfo;
+        createInfo.setStage(vk::ShaderStageFlagBits::eCompute);
+        createInfo.setModule(*shaderModule);
+        createInfo.setPName("main");
+        return createInfo;
+    }
+
+    vk::PipelineLayoutCreateInfo makePipelineLayoutCreateInfo(const vk::raii::Device& device)
+    {
+        vk::PipelineLayoutCreateInfo createInfo;
+        createInfo.setSetLayouts(*descSetLayout);
+        return createInfo;
+    }
+
+    vk::ComputePipelineCreateInfo makeComputePipelineCreateInfo(const vk::raii::Device& device)
+    {
+        vk::ComputePipelineCreateInfo createInfo;
+        createInfo.setStage(makePipelineShaderStageCreateInfo());
+        createInfo.setLayout(*pipelineLayout);
+        return createInfo;
+    }
+
+    vk::DescriptorSetAllocateInfo makeDescriptorSetAllocateInfo(const vk::raii::DescriptorPool& descPool)
+    {
+        vk::DescriptorSetAllocateInfo allocateInfo;
+        allocateInfo.setDescriptorPool(*descPool);
+        allocateInfo.setSetLayouts(*descSetLayout);
+        return allocateInfo;
+    }
+
+    void updateDescriptorSet(const vk::raii::Device& device, uint32_t binding, uint32_t count, const Image& image)
+    {
+        vk::DescriptorImageInfo descImageInfo;
+        descImageInfo.setImageView(*image.view);
+        descImageInfo.setImageLayout(vk::ImageLayout::eGeneral);
+
+        vk::WriteDescriptorSet imageWrite;
+        imageWrite.setDstSet(*descSet);
+        imageWrite.setDescriptorType(vk::DescriptorType::eStorageImage);
+        imageWrite.setDescriptorCount(count);
+        imageWrite.setDstBinding(binding);
+        imageWrite.setImageInfo(descImageInfo);
+
+        device.updateDescriptorSets(imageWrite, nullptr);
+    }
+
+    void run(const vk::raii::CommandBuffer& commandBuffer, uint32_t groupCountX, uint32_t groupCountY)
+    {
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0, *descSet, nullptr);
+        commandBuffer.dispatch(groupCountX, groupCountY, 1);
+    }
+
+    std::vector<unsigned int> spirvCode;
+    vk::raii::ShaderModule shaderModule;
+    vk::raii::DescriptorSetLayout descSetLayout;
+    vk::raii::PipelineLayout pipelineLayout;
+    vk::raii::Pipeline pipeline;
+    vk::raii::DescriptorSet descSet;
+};
+
 int main()
 {
     try {
@@ -117,7 +293,7 @@ int main()
         // Gather layers
         std::vector<const char*> layers{ "VK_LAYER_KHRONOS_validation" };
 
-        // Create Instance
+        // Create instance
         vk::ApplicationInfo appInfo;
         appInfo.apiVersion = VK_API_VERSION_1_2;
         vk::InstanceCreateInfo instanceCreateInfo;
@@ -213,116 +389,34 @@ int main()
         vk::raii::SwapchainKHR swapchain{ device, swapchainCreateInfo };
         std::vector swapChainImages = swapchain.getImages();
 
-        // Create image
-        vk::ImageCreateInfo imageCreateInfo;
-        imageCreateInfo.setImageType(vk::ImageType::e2D);
-        imageCreateInfo.setFormat(vk::Format::eB8G8R8A8Unorm);
-        imageCreateInfo.setExtent({ width, height, 1 });
-        imageCreateInfo.setMipLevels(1);
-        imageCreateInfo.setArrayLayers(1);
-        imageCreateInfo.setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc);
-        vk::raii::Image renderImage{ device, imageCreateInfo };
-
-        // Get memory type index for image
-        uint32_t memoryTypeIndex;
-        vk::MemoryRequirements requirements = renderImage.getMemoryRequirements();
-        vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
-        for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
-            if (requirements.memoryTypeBits & (1 << index)) {
-                memoryTypeIndex = index;
-            }
-        }
-
-        // Allocate memory
-        vk::MemoryAllocateInfo memoryAllocateInfo;
-        memoryAllocateInfo.setAllocationSize(requirements.size);
-        memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);
-        vk::raii::DeviceMemory imageMemory{ device, memoryAllocateInfo };
-
-        // Bind memory
-        renderImage.bindMemory(*imageMemory, 0);
-
-        // Create image view
-        vk::ImageViewCreateInfo imageViewCreateInfo;
-        imageViewCreateInfo.setImage(*renderImage);
-        imageViewCreateInfo.setViewType(vk::ImageViewType::e2D);
-        imageViewCreateInfo.setFormat(vk::Format::eB8G8R8A8Unorm);
-        imageViewCreateInfo.setSubresourceRange({ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 });
-        vk::raii::ImageView imageView{ device, imageViewCreateInfo };
-
-        // Set image layout
-        commandBuffer.begin(vk::CommandBufferBeginInfo{});
-        setImageLayout(commandBuffer, *renderImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-        commandBuffer.end();
-
-        vk::SubmitInfo submitInfo;
-        submitInfo.setCommandBuffers(*commandBuffer);
-        computeQueue.submit(submitInfo);
-        computeQueue.waitIdle();
-
-        // Compile shader
-        std::vector spvShader = compileToSPV(computeShader);
-
-        // Create shader module
-        vk::ShaderModuleCreateInfo shaderModuleCreateInfo;
-        shaderModuleCreateInfo.setCode(spvShader);
-        vk::raii::ShaderModule shaderModule{ device, shaderModuleCreateInfo };
+        Image renderImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
+        Image velocityImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
 
         // Create compute pipeline
-        vk::DescriptorSetLayoutBinding binding;
-        binding.setBinding(0);
-        binding.setDescriptorType(vk::DescriptorType::eStorageImage);
-        binding.setDescriptorCount(1);
-        binding.setStageFlags(vk::ShaderStageFlagBits::eCompute);
-
-        vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo;
-        descSetLayoutCreateInfo.setBindings(binding);
-        vk::raii::DescriptorSetLayout descSetLayout{ device, descSetLayoutCreateInfo };
-
-        vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-        pipelineLayoutCreateInfo.setSetLayouts(*descSetLayout);
-        vk::raii::PipelineLayout pipelineLayout{ device, pipelineLayoutCreateInfo };
-
-        vk::PipelineShaderStageCreateInfo shaderStageCreateInfo;
-        shaderStageCreateInfo.setStage(vk::ShaderStageFlagBits::eCompute);
-        shaderStageCreateInfo.setModule(*shaderModule);
-        shaderStageCreateInfo.setPName("main");
-
-        vk::ComputePipelineCreateInfo pipelineCreateInfo;
-        pipelineCreateInfo.setStage(shaderStageCreateInfo);
-        pipelineCreateInfo.setLayout(*pipelineLayout);
-        vk::raii::Pipeline pipeline{ device, nullptr, pipelineCreateInfo };
+        std::vector<vk::DescriptorSetLayoutBinding> renderKernelBindings{
+            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
+        };
+        std::vector<vk::DescriptorSetLayoutBinding> externalForceKernelBindings{
+            {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
+        };
 
         // Create descriptor set
         std::vector poolSizes{
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1}
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 10}
         };
         vk::DescriptorPoolCreateInfo descPoolCreateInfo;
         descPoolCreateInfo.setPoolSizes(poolSizes);
-        descPoolCreateInfo.setMaxSets(1);
+        descPoolCreateInfo.setMaxSets(10);
         descPoolCreateInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
         vk::raii::DescriptorPool descPool{ device, descPoolCreateInfo };
 
-        vk::DescriptorSetAllocateInfo descSetAllocationInfo;
-        descSetAllocationInfo.setDescriptorPool(*descPool);
-        descSetAllocationInfo.setSetLayouts(*descSetLayout);
+        ComputeKernel renderKernel{ device, renderShader, renderKernelBindings, descPool };
+        ComputeKernel externalForceKernel{ device, externalForceShader, externalForceKernelBindings, descPool };
 
-        vk::raii::DescriptorSets descSets{ device, descSetAllocationInfo };
-        vk::raii::DescriptorSet descSet = std::move(descSets.front());
-
-        // Update descriptor set
-        vk::DescriptorImageInfo descImageInfo;
-        descImageInfo.setImageView(*imageView);
-        descImageInfo.setImageLayout(vk::ImageLayout::eGeneral);
-
-        vk::WriteDescriptorSet imageWrite;
-        imageWrite.setDstSet(*descSet);
-        imageWrite.setDescriptorType(vk::DescriptorType::eStorageImage);
-        imageWrite.setDescriptorCount(1);
-        imageWrite.setDstBinding(0);
-        imageWrite.setImageInfo(descImageInfo);
-
-        device.updateDescriptorSets(imageWrite, nullptr);
+        renderKernel.updateDescriptorSet(device, 0, 1, renderImage);
+        renderKernel.updateDescriptorSet(device, 1, 1, velocityImage);
+        externalForceKernel.updateDescriptorSet(device, 0, 1, velocityImage);
 
         // Main loop
         while (!glfwWindowShouldClose(window)) {
@@ -336,22 +430,21 @@ int main()
             // Dispatch compute shader
             commandBuffer.reset();
             commandBuffer.begin(vk::CommandBufferBeginInfo{});
-            commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
-            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0, *descSet, nullptr);
-            commandBuffer.dispatch(width, height, 1);
+            externalForceKernel.run(commandBuffer, width, height);
+            renderKernel.run(commandBuffer, width, height);
 
             // Copy render image
-            setImageLayout(commandBuffer, *renderImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
+            setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal);
             setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
             vk::ImageCopy copyRegion;
             copyRegion.setSrcSubresource({ vk::ImageAspectFlagBits::eColor, 0, 0, 1 });
             copyRegion.setDstSubresource({ vk::ImageAspectFlagBits::eColor, 0, 0, 1 });
             copyRegion.setExtent({ width, height, 1 });
-            commandBuffer.copyImage(*renderImage, vk::ImageLayout::eTransferSrcOptimal,
+            commandBuffer.copyImage(*renderImage.image, vk::ImageLayout::eTransferSrcOptimal,
                                     swapChainImage, vk::ImageLayout::eTransferDstOptimal, copyRegion);
 
-            setImageLayout(commandBuffer, *renderImage, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
+            setImageLayout(commandBuffer, *renderImage.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral);
             setImageLayout(commandBuffer, swapChainImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR);
 
             commandBuffer.end();
@@ -369,6 +462,8 @@ int main()
             presentQueue.presentKHR(presentInfo);
             presentQueue.waitIdle();
         }
+        glfwDestroyWindow(window);
+        glfwTerminate();
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
     }
