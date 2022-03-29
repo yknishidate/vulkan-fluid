@@ -50,6 +50,32 @@ void main()
 }
 )";
 
+const std::string divergenceShader = R"(
+#version 460
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(binding = 0) uniform sampler2D velocitySampler;
+layout(binding = 1, rgba8) uniform image2D divergenceImage;
+
+vec2 toUV(vec2 value)
+{
+    return value / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+}
+
+void main()
+{
+    vec2 uv = gl_GlobalInvocationID.xy / (vec2(gl_NumWorkGroups) * vec2(gl_WorkGroupSize));
+
+    float vel_x0 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy - vec2(1, 0))).x;
+    float vel_x1 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(1, 0))).x;
+    float vel_y0 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy - vec2(0, 1))).y;
+    float vel_y1 = texture(velocitySampler, toUV(gl_GlobalInvocationID.xy + vec2(0, 1))).y;
+    float dx = vel_x1 - vel_x0;
+    float dy = vel_y1 - vel_y0;
+    float divergence = (dx + dy) / 2.0;
+    imageStore(divergenceImage, ivec2(gl_GlobalInvocationID.xy), vec4(divergence));
+}
+)";
+
 const std::string renderShader = R"(
 #version 460
 layout(local_size_x = 1, local_size_y = 1) in;
@@ -202,6 +228,7 @@ int main()
         Image renderImage{ device, physicalDevice, commandBuffer, computeQueue, width, height, vk::Format::eB8G8R8A8Unorm };
         Image velocityImage0{ device, physicalDevice, commandBuffer, computeQueue, width, height };
         Image velocityImage1{ device, physicalDevice, commandBuffer, computeQueue, width, height };
+        Image divergenceImage{ device, physicalDevice, commandBuffer, computeQueue, width, height };
         Buffer uniformBuffer{ device, physicalDevice, commandBuffer, computeQueue, sizeof(UniformBufferObject) };
 
         UniformBufferObject ubo;
@@ -232,6 +259,10 @@ int main()
             {0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eCompute},
             {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
         };
+        std::vector<vk::DescriptorSetLayoutBinding> divergenceKernelBindings{
+            {0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eCompute},
+            {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+        };
         std::vector<vk::DescriptorSetLayoutBinding> renderKernelBindings{
             {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
             {1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute}
@@ -240,11 +271,14 @@ int main()
         // Create kernels
         ComputeKernel externalForceKernel{ device, externalForceShader, externalForceKernelBindings, descPool };
         ComputeKernel advectKernel{ device, advectShader, advectKernelBindings, descPool };
+        ComputeKernel divergenceKernel{ device, divergenceShader, divergenceKernelBindings, descPool };
         ComputeKernel renderKernel{ device, renderShader, renderKernelBindings, descPool };
         externalForceKernel.updateDescriptorSet(device, 0, 1, velocityImage0);
         externalForceKernel.updateDescriptorSet(device, 1, 1, uniformBuffer);
         advectKernel.updateDescriptorSet(device, 0, 1, velocityImage0, vk::DescriptorType::eCombinedImageSampler);
         advectKernel.updateDescriptorSet(device, 1, 1, velocityImage1);
+        divergenceKernel.updateDescriptorSet(device, 0, 1, velocityImage1, vk::DescriptorType::eCombinedImageSampler);
+        divergenceKernel.updateDescriptorSet(device, 1, 1, divergenceImage);
         renderKernel.updateDescriptorSet(device, 0, 1, renderImage);
         renderKernel.updateDescriptorSet(device, 1, 1, velocityImage1);
 
@@ -273,6 +307,7 @@ int main()
             commandBuffer.begin(vk::CommandBufferBeginInfo{});
             externalForceKernel.run(commandBuffer, width, height);
             advectKernel.run(commandBuffer, width, height);
+            divergenceKernel.run(commandBuffer, width, height);
             renderKernel.run(commandBuffer, width, height);
 
             // Copy render image
