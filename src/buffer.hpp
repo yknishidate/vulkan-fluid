@@ -1,5 +1,5 @@
 #pragma once
-#include <vulkan/vulkan.hpp>
+#include "common.hpp"
 
 struct Buffer
 {
@@ -22,22 +22,12 @@ struct Buffer
         buffer = device.createBufferUnique(createInfo);
     }
 
-    void allocateMemory(vk::PhysicalDevice physicalDevice,
-                        vk::MemoryPropertyFlags memoryProp =
-                        vk::MemoryPropertyFlagBits::eHostVisible |
-                        vk::MemoryPropertyFlagBits::eHostCoherent)
+    void allocateMemory(vk::PhysicalDevice physicalDevice)
     {
         vk::MemoryRequirements requirements = device.getBufferMemoryRequirements(*buffer);
-        uint32_t memoryTypeIndex;
-        vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
-        for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
-            auto propertyFlags = memoryProperties.memoryTypes[index].propertyFlags;
-            bool match = (propertyFlags & memoryProp) == memoryProp;
-            if (requirements.memoryTypeBits & (1 << index) && match) {
-                memoryTypeIndex = index;
-            }
-        }
-
+        uint32_t memoryTypeIndex = findMemoryTypeIndex(physicalDevice, requirements,
+                                                       vk::MemoryPropertyFlagBits::eHostVisible |
+                                                       vk::MemoryPropertyFlagBits::eHostCoherent);
         vk::MemoryAllocateInfo memoryAllocateInfo;
         memoryAllocateInfo.setAllocationSize(requirements.size);
         memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);

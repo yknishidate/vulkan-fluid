@@ -11,6 +11,7 @@ add_executable(${PROJECT_NAME}
     src/image.hpp
     src/kernel.hpp
     src/timer.hpp
+    src/common.hpp
 )
 
 target_link_libraries(

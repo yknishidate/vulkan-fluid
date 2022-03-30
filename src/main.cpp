@@ -78,8 +78,8 @@ int main()
         vk::UniqueSurfaceKHR surface{ _surface, {*instance} };
 
         // Find queue families
-        uint32_t computeFamily = std::numeric_limits<uint32_t>::max();
-        uint32_t presentFamily = std::numeric_limits<uint32_t>::max();
+        uint32_t computeFamily{ UINT32_MAX };
+        uint32_t presentFamily{ UINT32_MAX };
         std::vector queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
         for (uint32_t index = 0; index < queueFamilyProperties.size(); index++) {
             if (queueFamilyProperties[index].queueFlags & vk::QueueFlagBits::eCompute) {
@@ -89,8 +89,7 @@ int main()
                 presentFamily = index;
             }
         }
-        if (computeFamily == std::numeric_limits<uint32_t>::max() ||
-            presentFamily == std::numeric_limits<uint32_t>::max()) {
+        if (computeFamily == UINT32_MAX || presentFamily == UINT32_MAX) {
             throw std::runtime_error("Failed to find queue families.");
         }
 
@@ -153,7 +152,7 @@ int main()
         Image pressureImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
         Buffer uniformBuffer{ *device, physicalDevice, sizeof(UniformBufferObject) };
 
-        UniformBufferObject ubo;
+        UniformBufferObject ubo{};
         ubo.mousePosition[0] = 0.0f;
         ubo.mousePosition[1] = 0.0f;
         ubo.mouseMove[0] = 0.0f;

@@ -1,5 +1,5 @@
 #pragma once
-#include <vulkan/vulkan.hpp>
+#include "common.hpp"
 
 void setImageLayout(vk::CommandBuffer commandBuffer, vk::Image image,
                     vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
@@ -71,20 +71,11 @@ struct Image
         image = device.createImageUnique(imageCreateInfo);
     }
 
-    void allocateMemory(vk::PhysicalDevice physicalDevice,
-                        vk::MemoryPropertyFlags memoryProp = vk::MemoryPropertyFlagBits::eDeviceLocal)
+    void allocateMemory(vk::PhysicalDevice physicalDevice)
     {
         vk::MemoryRequirements requirements = device.getImageMemoryRequirements(*image);
-        uint32_t memoryTypeIndex;
-        vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
-        for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index) {
-            auto propertyFlags = memoryProperties.memoryTypes[index].propertyFlags;
-            bool match = (propertyFlags & memoryProp) == memoryProp;
-            if (requirements.memoryTypeBits & (1 << index) && match) {
-                memoryTypeIndex = index;
-            }
-        }
-
+        uint32_t memoryTypeIndex = findMemoryTypeIndex(physicalDevice, requirements,
+                                                       vk::MemoryPropertyFlagBits::eDeviceLocal);
         vk::MemoryAllocateInfo memoryAllocateInfo;
         memoryAllocateInfo.setAllocationSize(requirements.size);
         memoryAllocateInfo.setMemoryTypeIndex(memoryTypeIndex);
