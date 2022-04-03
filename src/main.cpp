@@ -76,20 +76,18 @@ int main()
         }
         vk::UniqueSurfaceKHR surface{ _surface, {*instance} };
 
-        // Find queue families
-        uint32_t computeFamily{ UINT32_MAX };
-        uint32_t presentFamily{ UINT32_MAX };
+        // Find queue family
+        uint32_t queueFamily{ UINT32_MAX };
         std::vector queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
         for (uint32_t index = 0; index < queueFamilyProperties.size(); index++) {
-            if (queueFamilyProperties[index].queueFlags & vk::QueueFlagBits::eCompute) {
-                computeFamily = index;
-            }
-            if (physicalDevice.getSurfaceSupportKHR(index, *surface)) {
-                presentFamily = index;
+            auto supportCompute = queueFamilyProperties[index].queueFlags & vk::QueueFlagBits::eCompute;
+            auto supportPresent = physicalDevice.getSurfaceSupportKHR(index, *surface);
+            if (supportCompute && supportPresent) {
+                queueFamily = index;
             }
         }
-        if (computeFamily == UINT32_MAX || presentFamily == UINT32_MAX) {
-            throw std::runtime_error("Failed to find queue families.");
+        if (queueFamily == UINT32_MAX) {
+            throw std::runtime_error("Failed to find queue family.");
         }
 
         // Create device
@@ -99,7 +97,7 @@ int main()
 
         float queuePriority = 0.0f;
         vk::DeviceQueueCreateInfo computeQueueCreateInfo;
-        computeQueueCreateInfo.setQueueFamilyIndex(computeFamily);
+        computeQueueCreateInfo.setQueueFamilyIndex(queueFamily);
         computeQueueCreateInfo.setQueueCount(1);
         computeQueueCreateInfo.setPQueuePriorities(&queuePriority);
 
@@ -110,13 +108,12 @@ int main()
         vk::UniqueDevice device = physicalDevice.createDeviceUnique(deviceCreateInfo);
 
         // Get queue
-        vk::Queue computeQueue = device->getQueue(computeFamily, 0);
-        vk::Queue presentQueue = device->getQueue(presentFamily, 0);
+        vk::Queue queue = device->getQueue(queueFamily, 0);
 
         // Create command pool
         vk::CommandPoolCreateInfo commandPoolCreateInfo;
         commandPoolCreateInfo.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
-        commandPoolCreateInfo.setQueueFamilyIndex(computeFamily);
+        commandPoolCreateInfo.setQueueFamilyIndex(queueFamily);
         vk::UniqueCommandPool commandPool = device->createCommandPoolUnique(commandPoolCreateInfo);
 
         // Create command buffer
@@ -143,12 +140,12 @@ int main()
         std::vector swapchainImages = device->getSwapchainImagesKHR(*swapchain);
 
         // Create resources
-        Image renderImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height, vk::Format::eB8G8R8A8Unorm };
-        Image velocityImage0{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
-        Image velocityImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
-        Image divergenceImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
-        Image pressureImage0{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
-        Image pressureImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
+        Image renderImage{ *device, physicalDevice, *commandBuffer, queue, width, height, vk::Format::eB8G8R8A8Unorm };
+        Image velocityImage0{ *device, physicalDevice, *commandBuffer, queue, width, height };
+        Image velocityImage1{ *device, physicalDevice, *commandBuffer, queue, width, height };
+        Image divergenceImage{ *device, physicalDevice, *commandBuffer, queue, width, height };
+        Image pressureImage0{ *device, physicalDevice, *commandBuffer, queue, width, height };
+        Image pressureImage1{ *device, physicalDevice, *commandBuffer, queue, width, height };
 
         // Create descriptor pool
         std::vector<vk::DescriptorPoolSize> poolSizes{
@@ -269,14 +266,14 @@ int main()
             // Submit command buffer
             vk::SubmitInfo submitInfo;
             submitInfo.setCommandBuffers(*commandBuffer);
-            computeQueue.submit(submitInfo);
-            computeQueue.waitIdle();
+            queue.submit(submitInfo);
+            queue.waitIdle();
 
             // Present image
             vk::PresentInfoKHR presentInfo;
             presentInfo.setSwapchains(*swapchain);
             presentInfo.setImageIndices(imageIndex);
-            if (presentQueue.presentKHR(presentInfo) != vk::Result::eSuccess) {
+            if (queue.presentKHR(presentInfo) != vk::Result::eSuccess) {
                 throw std::runtime_error("Failed to present.");
             }
 
