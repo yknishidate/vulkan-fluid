@@ -91,18 +91,16 @@ int main()
         }
 
         // Create device
-        const std::vector requiredExtensions{
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        };
+        const std::vector requiredExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
         float queuePriority = 0.0f;
-        vk::DeviceQueueCreateInfo computeQueueCreateInfo;
-        computeQueueCreateInfo.setQueueFamilyIndex(queueFamily);
-        computeQueueCreateInfo.setQueueCount(1);
-        computeQueueCreateInfo.setPQueuePriorities(&queuePriority);
+        vk::DeviceQueueCreateInfo queueCreateInfo;
+        queueCreateInfo.setQueueFamilyIndex(queueFamily);
+        queueCreateInfo.setQueueCount(1);
+        queueCreateInfo.setPQueuePriorities(&queuePriority);
 
         vk::DeviceCreateInfo deviceCreateInfo;
-        deviceCreateInfo.setQueueCreateInfos(computeQueueCreateInfo);
+        deviceCreateInfo.setQueueCreateInfos(queueCreateInfo);
         deviceCreateInfo.setPEnabledLayerNames(layers);
         deviceCreateInfo.setPEnabledExtensionNames(requiredExtensions);
         vk::UniqueDevice device = physicalDevice.createDeviceUnique(deviceCreateInfo);
@@ -236,7 +234,7 @@ int main()
             copyRegion.setDstSubresource({ vk::ImageAspectFlagBits::eColor, 0, 0, 1 });
             copyRegion.setExtent({ width, height, 1 });
 
-            const int iteration = 32;
+            const int iteration = 16;
             for (int i = 0; i < iteration; i++) {
                 pressureKernel.run(*commandBuffer, width, height);
 
