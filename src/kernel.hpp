@@ -51,8 +51,10 @@ struct ComputeKernel
     ComputeKernel(vk::Device device,
                   const std::string& path,
                   const std::vector<vk::DescriptorSetLayoutBinding>& bindings,
-                  vk::DescriptorPool descPool)
+                  vk::DescriptorPool descPool,
+                  size_t pushSize = 0)
         : device{ device }
+        , pushSize{ pushSize }
     {
         createShaderModule(path);
         createDescSetLayout(bindings);
@@ -81,6 +83,13 @@ struct ComputeKernel
     {
         vk::PipelineLayoutCreateInfo createInfo;
         createInfo.setSetLayouts(*descSetLayout);
+        if (pushSize) {
+            vk::PushConstantRange pushRange;
+            pushRange.setOffset(0);
+            pushRange.setSize(pushSize);
+            pushRange.setStageFlags(vk::ShaderStageFlagBits::eCompute);
+            createInfo.setPushConstantRanges(pushRange);
+        }
         pipelineLayout = device.createPipelineLayoutUnique(createInfo);
     }
 
@@ -99,7 +108,6 @@ struct ComputeKernel
             throw std::runtime_error("failed to create ray tracing pipeline.");
         }
         pipeline = std::move(res.value.front());
-
     }
 
     void allocateDescriptorSet(vk::DescriptorPool descPool)
@@ -129,28 +137,13 @@ struct ComputeKernel
         device.updateDescriptorSets(imageWrite, nullptr);
     }
 
-    void updateDescriptorSet(uint32_t binding, uint32_t count, const Buffer& buffer,
-                             vk::DescriptorType descType = vk::DescriptorType::eUniformBuffer)
-    {
-        vk::DescriptorBufferInfo descBufferInfo;
-        descBufferInfo.setBuffer(*buffer.buffer);
-        descBufferInfo.setOffset(0);
-        descBufferInfo.setRange(buffer.size);
-
-        vk::WriteDescriptorSet bufferWrite;
-        bufferWrite.setDstSet(*descSet);
-        bufferWrite.setDescriptorType(descType);
-        bufferWrite.setDescriptorCount(count);
-        bufferWrite.setDstBinding(binding);
-        bufferWrite.setBufferInfo(descBufferInfo);
-
-        device.updateDescriptorSets(bufferWrite, nullptr);
-    }
-
-    void run(vk::CommandBuffer commandBuffer, uint32_t groupCountX, uint32_t groupCountY)
+    void run(vk::CommandBuffer commandBuffer, uint32_t groupCountX, uint32_t groupCountY, void* pushData = nullptr)
     {
         commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
         commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout, 0, *descSet, nullptr);
+        if (pushData) {
+            commandBuffer.pushConstants(*pipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, pushSize, pushData);
+        }
         commandBuffer.dispatch(groupCountX, groupCountY, 1);
     }
 
@@ -161,4 +154,5 @@ struct ComputeKernel
     vk::UniquePipelineLayout pipelineLayout;
     vk::UniquePipeline pipeline;
     vk::UniqueDescriptorSet descSet;
+    size_t pushSize;
 };

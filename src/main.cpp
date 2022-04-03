@@ -3,7 +3,6 @@
 #include <iostream>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
-#include "buffer.hpp"
 #include "image.hpp"
 #include "kernel.hpp"
 #include "timer.hpp"
@@ -20,7 +19,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsMessengerCallback(
     return VK_FALSE;
 }
 
-struct UniformBufferObject
+struct PushConstants
 {
     float mousePosition[2];
     float mouseMove[2];
@@ -150,20 +149,11 @@ int main()
         Image divergenceImage{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
         Image pressureImage0{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
         Image pressureImage1{ *device, physicalDevice, *commandBuffer, computeQueue, width, height };
-        Buffer uniformBuffer{ *device, physicalDevice, sizeof(UniformBufferObject) };
-
-        UniformBufferObject ubo{};
-        ubo.mousePosition[0] = 0.0f;
-        ubo.mousePosition[1] = 0.0f;
-        ubo.mouseMove[0] = 0.0f;
-        ubo.mouseMove[1] = 0.0f;
-        uniformBuffer.copy(&ubo);
 
         // Create descriptor pool
-        std::vector poolSizes{
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 20},
-            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 20},
-            vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 20},
+        std::vector<vk::DescriptorPoolSize> poolSizes{
+            {vk::DescriptorType::eStorageImage, 20},
+            {vk::DescriptorType::eCombinedImageSampler, 20},
         };
         vk::DescriptorPoolCreateInfo descriptorPoolCreateInfo;
         descriptorPoolCreateInfo.setPoolSizes(poolSizes);
@@ -198,13 +188,12 @@ int main()
         };
 
         // Create kernels
-        ComputeKernel externalForceKernel{ *device, "shader/externalForce.comp", externalForceKernelBindings, *descPool };
+        ComputeKernel externalForceKernel{ *device, "shader/externalForce.comp", externalForceKernelBindings, *descPool, sizeof(PushConstants) };
         ComputeKernel advectKernel{ *device, "shader/advect.comp", advectKernelBindings, *descPool };
         ComputeKernel divergenceKernel{ *device, "shader/divergence.comp", divergenceKernelBindings, *descPool };
         ComputeKernel pressureKernel{ *device, "shader/pressure.comp", pressureKernelBindings, *descPool };
         ComputeKernel renderKernel{ *device, "shader/render.comp", renderKernelBindings, *descPool };
         externalForceKernel.updateDescriptorSet(0, 1, velocityImage0);
-        externalForceKernel.updateDescriptorSet(1, 1, uniformBuffer);
         advectKernel.updateDescriptorSet(0, 1, velocityImage0, vk::DescriptorType::eCombinedImageSampler);
         advectKernel.updateDescriptorSet(1, 1, velocityImage1);
         divergenceKernel.updateDescriptorSet(0, 1, velocityImage1, vk::DescriptorType::eCombinedImageSampler);
@@ -219,6 +208,7 @@ int main()
         renderKernel.updateDescriptorSet(4, 1, velocityImage0);
 
         // Main loop
+        PushConstants pushConstants{ {0.0f, 0.0f}, {0.0f, 0.0f} };
         uint32_t frame = 0;
         Timer timer;
         timer.start();
@@ -228,11 +218,10 @@ int main()
             // Get mouse input
             double xpos, ypos;
             glfwGetCursorPos(window, &xpos, &ypos);
-            ubo.mouseMove[0] = static_cast<float>(xpos) - ubo.mousePosition[0];
-            ubo.mouseMove[1] = static_cast<float>(ypos) - ubo.mousePosition[1];
-            ubo.mousePosition[0] = static_cast<float>(xpos);
-            ubo.mousePosition[1] = static_cast<float>(ypos);
-            uniformBuffer.copy(&ubo);
+            pushConstants.mouseMove[0] = static_cast<float>(xpos) - pushConstants.mousePosition[0];
+            pushConstants.mouseMove[1] = static_cast<float>(ypos) - pushConstants.mousePosition[1];
+            pushConstants.mousePosition[0] = static_cast<float>(xpos);
+            pushConstants.mousePosition[1] = static_cast<float>(ypos);
 
             // Acquire next image
             vk::UniqueSemaphore semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{});
@@ -241,7 +230,7 @@ int main()
 
             // Dispatch compute shader
             commandBuffer->begin(vk::CommandBufferBeginInfo{});
-            externalForceKernel.run(*commandBuffer, width, height);
+            externalForceKernel.run(*commandBuffer, width, height, &pushConstants);
             advectKernel.run(*commandBuffer, width, height);
             divergenceKernel.run(*commandBuffer, width, height);
 
@@ -250,7 +239,7 @@ int main()
             copyRegion.setDstSubresource({ vk::ImageAspectFlagBits::eColor, 0, 0, 1 });
             copyRegion.setExtent({ width, height, 1 });
 
-            const int iteration = 16;
+            const int iteration = 32;
             for (int i = 0; i < iteration; i++) {
                 pressureKernel.run(*commandBuffer, width, height);
 
@@ -290,7 +279,6 @@ int main()
             if (presentQueue.presentKHR(presentInfo) != vk::Result::eSuccess) {
                 throw std::runtime_error("Failed to present.");
             }
-            presentQueue.waitIdle();
 
             frame++;
             if (frame % 100 == 0) {

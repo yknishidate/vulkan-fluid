@@ -7,11 +7,9 @@ add_subdirectory(external/glslang)
 
 add_executable(${PROJECT_NAME} 
     src/main.cpp 
-    src/buffer.hpp
     src/image.hpp
     src/kernel.hpp
     src/timer.hpp
-    src/common.hpp
 )
 
 target_link_libraries(
