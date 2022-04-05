@@ -5,7 +5,6 @@
 #include <GLFW/glfw3.h>
 #include "image.hpp"
 #include "kernel.hpp"
-#include "timer.hpp"
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsMessengerCallback(
@@ -43,7 +42,7 @@ int main()
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
         // Gather layers
-        std::vector<const char*> layers{ "VK_LAYER_KHRONOS_validation" };
+        std::vector<const char*> layers{ "VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor" };
 
         // Create instance
         vk::DynamicLoader dl;
@@ -204,9 +203,6 @@ int main()
 
         // Main loop
         PushConstants pushConstants{ {0.0f, 0.0f}, {0.0f, 0.0f} };
-        uint32_t frame = 0;
-        Timer timer;
-        timer.start();
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
@@ -273,12 +269,6 @@ int main()
             presentInfo.setImageIndices(imageIndex);
             if (queue.presentKHR(presentInfo) != vk::Result::eSuccess) {
                 throw std::runtime_error("Failed to present.");
-            }
-
-            frame++;
-            if (frame % 100 == 0) {
-                std::cout << 100000.0f / timer.elapsed() << " fps" << std::endl;
-                timer.start();
             }
         }
         glfwDestroyWindow(window);
