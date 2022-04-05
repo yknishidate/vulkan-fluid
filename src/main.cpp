@@ -100,7 +100,6 @@ int main()
 
         vk::DeviceCreateInfo deviceCreateInfo;
         deviceCreateInfo.setQueueCreateInfos(queueCreateInfo);
-        deviceCreateInfo.setPEnabledLayerNames(layers);
         deviceCreateInfo.setPEnabledExtensionNames(requiredExtensions);
         vk::UniqueDevice device = physicalDevice.createDeviceUnique(deviceCreateInfo);
 
